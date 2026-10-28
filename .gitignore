@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Generated database — rebuilt automatically on first run
+racing.db
+
+# Secrets & environment
+.env
+.streamlit/secrets.toml
+
+# Local artifacts
+*.mov
+*.pdf
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

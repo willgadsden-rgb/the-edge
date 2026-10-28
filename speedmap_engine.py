@@ -1,0 +1,262 @@
+"""Tactical speed-map engine for The Edge (Phase 6).
+
+Turns barrier + early-speed + track geometry into institutional-grade tactical
+settling: a lateral lane, a running zone, and a tactical risk tag per runner.
+Mock data only (see CLAUDE.md) - early-speed figures are synthesised deterministically.
+"""
+
+import hashlib
+
+# Lateral lanes off the inside rail.
+LANE_NAMES = {1: "Rail (Fence)", 2: "One-Off", 3: "3-Wide", 4: "4-Wide"}
+
+# Running zones from the front of the field to the back.
+ZONE_LEADER = "Leader"
+ZONE_BOXSEAT = "Leader's Back / Box Seat"
+ZONE_HANDY = "Handy"
+ZONE_MIDFIELD = "Midfield"
+ZONE_WORSE = "Worse Than Midfield"
+ZONE_BACK = "Backmarker"
+
+# Tactical tags.
+TAG_3WNC = "3WNC"            # three-wide no cover - caught wide, paying an energy tax
+TAG_BOXSEAT = "Box Seat"    # dream run behind the leader on the fence
+TAG_POCKETED = "Pocketed"   # held up behind slower runners on the rail
+TAG_DUEL = "Contested Duel"  # suicidal early pressure up front
+TAG_CLEAR = "Clear Run"
+
+TAG_BLURB = {
+    TAG_3WNC: "3WNC - Energy Tax",
+    TAG_BOXSEAT: "Box Seat - Dream Run",
+    TAG_POCKETED: "Pocketed - Needs Luck",
+    TAG_DUEL: "Contested Duel - Suicidal Pace",
+    TAG_CLEAR: "Clear Run",
+}
+
+
+def early_speed_rating(horse_name):
+    """Deterministic early-speed figure on a 0-10 scale (10 = brilliant beginner)."""
+    h = int(hashlib.md5(("es:" + horse_name).encode("utf-8")).hexdigest(), 16)
+    raw = 30.0 + (h % 651) / 10.0          # 30-95 (legacy internal scale)
+    return round((raw - 30.0) / 65.0 * 10.0, 1)
+
+
+def _zone(rank, n, is_leader_group):
+    if rank == 1:
+        return ZONE_LEADER
+    frac = rank / max(1, n)
+    if rank <= 3 and frac <= 0.35:
+        return ZONE_BOXSEAT if rank == 2 else ZONE_HANDY
+    if frac <= 0.35:
+        return ZONE_HANDY
+    if frac <= 0.60:
+        return ZONE_MIDFIELD
+    if frac <= 0.82:
+        return ZONE_WORSE
+    return ZONE_BACK
+
+
+def _lane(barrier, es10, zone, is_leader_group, run_to_turn_m, n):
+    """Lateral lane 1-4, applying the 600m slotting rule.
+
+    Long run to the turn (>=350m): there is ample time to ease and slot, so wide-drawn
+    backmarkers/midfielders come to the rail or one-off; only Handy/pressing runners with
+    real early speed that are out-paced by inside speed and fail to cross stay 3/4-wide.
+    Short run (<300m) or a straight course: retain the wide traps for wide barriers.
+    """
+    long_run = run_to_turn_m is not None and run_to_turn_m >= 350
+
+    # Genuine early speed crosses to the fence/one-off regardless of run length.
+    if is_leader_group:
+        return 1 if barrier <= 5 else 2
+
+    if long_run:
+        # Only a pressing/handy runner with moderate+ speed from a wide gate gets caught wide.
+        if zone == ZONE_HANDY and es10 >= 5.0 and barrier >= 7:
+            return 4 if (barrier >= 10 and es10 >= 6.5) else 3
+        if zone in (ZONE_BACK, ZONE_WORSE):
+            return 1          # ease right back and save ground on the fence
+        if zone == ZONE_MIDFIELD:
+            return 2          # one-off, tucked in behind the leaders
+        if zone == ZONE_BOXSEAT:
+            return 1
+        return 1 if barrier <= 4 else 2   # remaining Handy slot in
+
+    # Short run to the turn, or a straight course: not enough time to cross.
+    if barrier <= 2:
+        return 1
+    if barrier <= 5:
+        return 2
+    if barrier <= 8:
+        return 3
+    return 4
+
+
+def _tag(lane, zone, in_duel):
+    if in_duel:
+        return TAG_DUEL
+    if lane == 1 and zone in (ZONE_BOXSEAT, ZONE_HANDY):
+        return TAG_BOXSEAT
+    if lane >= 3 and zone in (ZONE_HANDY, ZONE_MIDFIELD, ZONE_WORSE):
+        return TAG_3WNC
+    if lane == 1 and zone in (ZONE_MIDFIELD, ZONE_WORSE, ZONE_BACK):
+        return TAG_POCKETED
+    return TAG_CLEAR
+
+
+# -----------------------------------------------------------------------------
+# Predictive pace / tempo modelling (4-tier)
+# -----------------------------------------------------------------------------
+TEMPO_SLOW = "SLOW"
+TEMPO_GENUINE = "GENUINE"
+TEMPO_FAST = "FAST"
+TEMPO_SUICIDAL = "SUICIDAL"
+
+TEMPO_BADGE = {
+    TEMPO_SLOW: "🐢 SLOW (Sit & Sprint)",
+    TEMPO_GENUINE: "⚖️ GENUINE",
+    TEMPO_FAST: "🔥 FAST",
+    TEMPO_SUICIDAL: "💣 SUICIDAL SPEED DUEL",
+}
+
+
+def classify_tempo(n_leaders, pace_pressure):
+    """Classify the projected tempo into one of four tiers."""
+    if n_leaders >= 4 or pace_pressure >= 1.15:
+        tier = TEMPO_SUICIDAL
+    elif n_leaders == 3 or pace_pressure >= 1.05:
+        tier = TEMPO_FAST
+    elif n_leaders <= 1 and pace_pressure <= 0.92:
+        tier = TEMPO_SLOW
+    else:
+        tier = TEMPO_GENUINE
+    return tier, TEMPO_BADGE[tier]
+
+
+def tempo_modifier(tier, zone):
+    """Return (points, badge-or-None) for a runner under a given tempo tier.
+
+    Slow tempo boosts leaders / penalises backmarkers; a suicidal duel penalises
+    the leaders and upgrades swoopers.
+    """
+    if tier == TEMPO_SLOW:
+        if zone in (ZONE_LEADER, ZONE_BOXSEAT):
+            return 1.5, {"name": "Slow-Tempo On-Pace", "points": 1.5, "type": "bonus"}
+        if zone in (ZONE_BACK, ZONE_WORSE):
+            return -1.5, {"name": "Slow-Tempo Backmarker", "points": -1.5, "type": "penalty"}
+    elif tier == TEMPO_SUICIDAL:
+        if zone == ZONE_LEADER:
+            return -2.0, {"name": "Suicidal-Duel Leader", "points": -2.0, "type": "penalty"}
+        if zone in (ZONE_BACK, ZONE_WORSE):
+            return 2.0, {"name": "Suicidal-Duel Swooper", "points": 2.0, "type": "bonus"}
+    return 0.0, None
+
+
+import math as _math
+
+
+def track_point(d, w, geom):
+    """Map travelled distance `d` (from the jump) + lane offset `w` to canvas (x, y).
+
+    Full turning-track geometry in three stages:
+      Stage 1  Back straight  (0 .. run_to_turn_m): heads east, rail at y=0.
+      Stage 2  90-degree left bend (arc of radius turn_radius): curves up-left.
+      Stage 3  Home straight (after the bend): heads north toward the winning post.
+    A straight course (no turn) is a single east-bound corridor. Lane offset w is
+    measured to the outside of the track, so wider runners travel the longer path.
+    """
+    direction = geom.get("turn_direction", "straight")
+    L1 = geom.get("run_to_turn_m")
+    R = geom.get("turn_radius")
+    if direction == "straight" or not L1 or not R:
+        return (d, -w)
+    arc = R * _math.pi / 2.0
+    L2 = L1 + arc
+    # Compute the left-handed (anti-clockwise, Melbourne) path first, then mirror
+    # across the back straight for a right-handed (clockwise, Sydney) course.
+    if d <= L1:                                   # back straight
+        x, y = d, -w
+    elif d <= L2:                                 # sweeping bend
+        a = d - L1
+        radius = R + w
+        ang = -_math.pi / 2.0 + a / R
+        x, y = (L1 + radius * _math.cos(ang), R + radius * _math.sin(ang))
+    else:                                         # home straight
+        x, y = (L1 + R + w, R + (d - L2))
+    if direction == "right":                      # clockwise: mirror vertically
+        y = -y
+    return (x, y)
+
+
+def fan_lane(settle_lane, zone, tag, rank, n):
+    """Off-corner lane (1-6): where a runner fans out as the field straightens.
+
+    Rail leaders / pocketed hold the fence; stalkers roll to lane 2-3; swoopers
+    and backmarkers fan wide (4-6) into clear galloping room.
+    """
+    if "Pocketed" in (tag or "") or zone in (ZONE_LEADER, ZONE_BOXSEAT):
+        return 1
+    if zone == ZONE_HANDY:
+        return 2 if settle_lane <= 2 else 3
+    if zone == ZONE_MIDFIELD:
+        return 3
+    if zone == ZONE_WORSE:
+        return 4
+    if zone == ZONE_BACK:
+        return 4 + (rank % 3)                     # spread backmarkers across 4-6
+    return min(6, settle_lane + 1)
+
+
+def corner_role(zone, tag):
+    """Short descriptor of a runner's position rounding into the straight."""
+    if "Pocketed" in (tag or ""):
+        return "🔒 Held Up / Seeking Run"
+    if zone == ZONE_LEADER:
+        return "Rail Leader — kicks clear"
+    if zone == ZONE_BOXSEAT:
+        return "Box Seat — one-paced run"
+    if zone in (ZONE_BACK, ZONE_WORSE):
+        return "Swooper — fans wide for room"
+    return "Stalker — rolls into the clear"
+
+
+def build_tactical_map(entries, geom=None):
+    """Return {horse_name: tactical dict} for the active field, plus duel info.
+
+    Each tactical dict: early_speed, lane, lane_name, zone, tag, tag_blurb, rank,
+    is_leader_group.
+    """
+    field = [e for e in entries if not e.get("scratched")]
+    n = max(1, len(field))
+    for e in field:
+        e["_es10"] = early_speed_rating(e["horse_name"])
+
+    order = sorted(field, key=lambda e: -e["_es10"])
+    rank_by = {e["horse_name"]: i for i, e in enumerate(order, start=1)}
+    leaders = {e["horse_name"] for e in field if e["_es10"] >= 7.0}
+    duel = len(leaders) >= 3
+
+    run_to_turn = geom.get("run_to_turn_m") if geom else None
+    result = {}
+    for e in field:
+        name = e["horse_name"]
+        rank = rank_by[name]
+        is_leader = name in leaders
+        zone = _zone(rank, n, is_leader)
+        lane = _lane(e["barrier"], e["_es10"], zone, is_leader, run_to_turn, n)
+        tag = _tag(lane, zone, duel and is_leader)
+        result[name] = {
+            "early_speed": e["_es10"], "rank": rank, "is_leader_group": is_leader,
+            "lane": lane, "lane_name": LANE_NAMES[lane], "zone": zone,
+            "tag": tag, "tag_blurb": TAG_BLURB[tag],
+        }
+    return {"runners": result, "duel": duel, "leaders": leaders, "field_size": n}
+
+
+if __name__ == "__main__":
+    demo = [{"horse_name": "Gallant Spur", "barrier": 1},
+            {"horse_name": "Northern Echo", "barrier": 8},
+            {"horse_name": "Midnight Tempo", "barrier": 4}]
+    tm = build_tactical_map(demo)
+    for name, t in tm["runners"].items():
+        print(name, t["lane_name"], t["zone"], t["tag_blurb"], "ES", t["early_speed"])
