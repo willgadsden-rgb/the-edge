@@ -80,3 +80,58 @@ def inspect_live_feed():
         "pastEvent_keys": _types(past0),
         "PROBES": probes,
     }
+
+
+def inspect_results(max_meetings=3):
+    """Find a race that has already run today and report whether the feed exposes
+    live results on it — the open question for intraday bias (#2) and auto-settle.
+
+    Scans the few soonest meetings, lists every race's status, and for the first
+    race that looks resulted (status not open, or an entry carrying a result
+    field) dumps the race + entry shapes and the actual result values. Costs
+    ~1 + 5*scanned credits.
+    """
+    session = fk._session()
+    upcoming = fk._get(session, fk._UPCOMING_PATH)
+    if isinstance(upcoming, dict):
+        upcoming = upcoming.get("meetings", [])
+    if not upcoming:
+        return {"error": "upcoming feed returned no meetings"}
+    upcoming.sort(key=lambda m: (m.get("date") or 0, not m.get("tabMeeting", False)))
+
+    _OPEN = {"", "OPEN", "ACCEPTANCES", "FINAL_FIELD", "FINALFIELD", "CLOSED", "NORMAL", "UPCOMING"}
+    scanned, found = [], None
+    for m in upcoming[:max_meetings]:
+        summary = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=m.get("id")))
+        races = summary.get("races") or []
+        scanned.append({"track": m.get("trackName"),
+                        "race_status": [[r.get("number"), r.get("status")] for r in races]})
+        if found is None:
+            for r in races:
+                ents = r.get("entries") or []
+                e0 = ents[0] if ents else {}
+                has_result = any(k in e0 for k in ("finishPosition", "result", "bsp", "betfairSp", "margin", "startingPrice"))
+                if has_result or str(r.get("status") or "").upper() not in _OPEN:
+                    found = (m.get("trackName"), r, e0)
+                    break
+
+    if found is None:
+        return {"scanned": scanned,
+                "note": "No resulted race found in the scanned meetings — all still open. "
+                        "Try again later in the day once early races have run."}
+
+    track, race, e0 = found
+    result_vals = {k: e0.get(k) for k in
+                   ("number", "scratched", "finishPosition", "result", "margin", "bsp",
+                    "betfairSp", "sp", "startingPrice") if k in e0}
+    return {
+        "scanned": scanned,
+        "found_track": track,
+        "race_number": race.get("number"),
+        "race_status": race.get("status"),
+        "race_keys": _types(race),
+        "race_result_fields": _has(race, "winner", "results", "result", "placings",
+                                   "dividends", "exotics", "resultStatus"),
+        "resulted_entry_keys": _types(e0),
+        "resulted_entry_result_values": result_vals,
+    }

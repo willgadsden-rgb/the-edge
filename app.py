@@ -2006,6 +2006,14 @@ with st.sidebar:
         except Exception as exc:
             st.session_state["_feed_inv"] = {"error": str(exc)}
         st.rerun()
+    if st.button("🔬 Inspect race results (~16 cr)", use_container_width=True, key="feed_results_btn",
+                 help="One-off: find a race that has already run today and show whether the feed exposes live results (for intraday bias + auto-settle)."):
+        import feed_inspect
+        try:
+            st.session_state["_feed_inv"] = feed_inspect.inspect_results()
+        except Exception as exc:
+            st.session_state["_feed_inv"] = {"error": str(exc)}
+        st.rerun()
     st.divider()
     st.caption("⚙️ Staking, commission & surface drift now live in the **Settings** tab. "
                "Live Form King data — strict live-only, no mock fallback.")
