@@ -23,7 +23,8 @@ import weather_engine as we
 import exotics_engine as ex
 from database import get_connection, geometry_for, par_for
 from pricing_engine import (renormalize_after_scratching, fair_book_from_scores,
-                            devig_market_odds, calculate_blended_fair_prices)
+                            devig_market_odds, calculate_blended_fair_prices, effective_odds)
+from rating_engine import calculate_0_to_100_score
 from staking_engine import calculate_stake, calculate_mao, is_void, TARGET_PROFIT
 from rating_engine import calculate_projected_score, classify_trajectory, clamp_modifier
 from prep_engine import profile_runner
@@ -175,7 +176,8 @@ def chk_benchmark_par():
     bm84 = par_for("Open Benchmark 84")
     maiden = par_for("Maiden Plate")
     g1 = par_for("Group 1 Classic")
-    ok = abs(bm84 - 78.0) < 1e-6 and abs(maiden - 42.0) < 1e-6 and abs(g1 - 90.0) < 1e-6
+    # WFA-scale pars (recalibrated for the 3-layer engine): Maiden < BM84 < G1.
+    ok = abs(bm84 - 77.0) < 1e-6 and abs(maiden - 61.0) < 1e-6 and abs(g1 - 86.0) < 1e-6
     return (ok, "BM84 par={}, Maiden par={}, G1 par={}".format(bm84, maiden, g1))
 
 
@@ -464,6 +466,34 @@ def chk_shrinkage():
     return ok, "phantom overlay edge {:+.0f}% -> {:+.0f}% after 70% market anchor".format(pe, be)
 
 
+def chk_wfa_outrating():
+    """Non-winner out-rating: a beaten runner carrying 60kg with stronger past
+    merit calculates a higher score than a 54kg winner with weaker merit."""
+    beaten = calculate_0_to_100_score(None, 60.0, 1400, "Benchmark 64",
+                                      last_ratings=[74, 73, 72], barrier=6)
+    winner = calculate_0_to_100_score(None, 54.0, 1400, "Benchmark 64",
+                                      last_ratings=[68, 67, 66], barrier=6)
+    return beaten > winner, "60kg beaten {:.1f} > 54kg winner {:.1f}".format(beaten, winner)
+
+
+def chk_debut_baseline():
+    """A debutant (no past runs) anchors to the class par baseline, not 0."""
+    s = calculate_0_to_100_score(None, 57.0, 1200, "Maiden", last_ratings=[], barrier=6)
+    return 50.0 <= s <= 65.0, "debutant maiden anchors at {:.1f} (class par)".format(s)
+
+
+def chk_overlay_bounds():
+    """A raw overlay is compressed (to well under half) by the 70% market anchor,
+    while staying a positive, commercial edge rather than a phantom triple-digit %."""
+    runners = [{"id": 1, "score": 78, "market_odds": 4.0, "effective_odds": effective_odds(4.0)},
+               {"id": 2, "score": 70, "market_odds": 2.6, "effective_odds": effective_odds(2.6)},
+               {"id": 3, "score": 66, "market_odds": 5.0, "effective_odds": effective_odds(5.0)},
+               {"id": 4, "score": 60, "market_odds": 9.0, "effective_odds": effective_odds(9.0)}]
+    pure = calculate_blended_fair_prices(runners, market_weight=0.0)[1]["edge_pct"]
+    blend = calculate_blended_fair_prices(runners, market_weight=0.70)[1]["edge_pct"]
+    return 0.0 < blend < pure * 0.5, "overlay compressed {:+.0f}% -> {:+.0f}% (anchored)".format(pure, blend)
+
+
 def chk_ballarat_geometry():
     """Simplified geometry: every race (incl. Ballarat) is a straight run."""
     g = geometry_for("Ballarat", 1000)
@@ -515,6 +545,10 @@ def main():
     check("Market de-vig normalises to 1.000", chk_devig)
     check("70/30 blended book sums to 1.000", chk_blend_sums)
     check("Phantom overlay shrinks to market", chk_shrinkage)
+    # --- 3-layer WFA rating engine ---
+    check("Non-winner out-rating (60kg > 54kg)", chk_wfa_outrating)
+    check("Debutant anchors to class par", chk_debut_baseline)
+    check("Blended overlay in commercial band", chk_overlay_bounds)
 
     width = 72
     print("=" * width)

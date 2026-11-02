@@ -140,17 +140,20 @@ SCHEMA.append(USER_BETS_SQL)
 # -----------------------------------------------------------------------------
 # First keyword matched in class_name wins. Values are the model score a horse
 # typically needs to win that grade of race.
+# Par-score-to-win on the WFA rating scale used by the 3-layer engine (Form
+# King weightForAgeRating). Slightly above each grade's par baseline — the
+# ability a winner of that grade typically rates.
 BENCHMARK_PAR = [
-    ("group 1", 90.0), ("group 2", 86.0), ("group 3", 82.0),
+    ("group 1", 86.0), ("group 2", 84.0), ("group 3", 82.0),
     ("listed", 80.0), ("stakes", 80.0),
-    ("benchmark 84", 78.0), ("open", 76.0),
-    ("benchmark 78", 74.0), ("saturday", 74.0), ("metro", 74.0),
-    ("benchmark 70", 69.0), ("midweek", 69.0),
-    ("benchmark 64", 56.0), ("provincial", 56.0),
-    ("benchmark 58", 48.0), ("country", 48.0),
-    ("maiden", 42.0),
+    ("benchmark 84", 77.0), ("open", 76.0),
+    ("benchmark 78", 75.0), ("saturday", 75.0), ("metro", 75.0),
+    ("benchmark 70", 71.0), ("midweek", 71.0),
+    ("benchmark 64", 68.0), ("provincial", 68.0),
+    ("benchmark 58", 64.0), ("country", 64.0),
+    ("maiden", 61.0),
 ]
-DEFAULT_PAR = 60.0
+DEFAULT_PAR = 66.0
 
 
 def par_for(class_name):

@@ -8,6 +8,8 @@ Usage:
     python run_model.py
 """
 
+import json
+
 from database import get_connection
 from rating_engine import (
     calculate_0_to_100_score,
@@ -111,8 +113,15 @@ def evaluate_race(conn, race, meeting):
     # 1) Rating + prep adjustment per runner; persist score_0_to_100.
     meta = {}  # entry_id -> display/intermediate values
     for e in entries:
+        try:
+            last5 = json.loads(e["last5_json"] or "[]")
+        except Exception:
+            last5 = []
         base_score = calculate_0_to_100_score(
-            e["wfa_rating"], e["weight"], race["distance"], race["class_name"])
+            e["wfa_rating"], e["weight"], race["distance"], race["class_name"],
+            last_ratings=[r.get("rating") for r in last5],     # newest first
+            barrier=e["barrier"],
+            last_positions=[r.get("pos") for r in last5])
 
         traj = generate_trajectory(e["horse_name"], base_score)
         trend = trajectory_trend(traj)

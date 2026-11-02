@@ -54,27 +54,104 @@ def _clamp(value, low=0.0, high=100.0):
     return max(low, min(high, value))
 
 
-def calculate_0_to_100_score(wfa_rating, weight, distance, class_name):
-    """Normalise a runner's inputs to an absolute 0-100 ability score.
+# --- 3-layer WFA rating engine ------------------------------------------------
+# Layer 3 weight pull: points per kg off the 57.0kg benchmark.
+WEIGHT_PER_KG = 0.38
+# Layer 1 recency decay across the last runs, L1 (newest) -> L4 (oldest).
+RECENCY_WEIGHTS = (0.45, 0.30, 0.15, 0.10)
 
-    distance is accepted for suitability modelling; in Phase 2 it is neutral
-    (no synthetic distance form exists yet) and documented as a reserved input.
+# Class par baselines on the WFA scale — the ability a debutant / no-form runner
+# is anchored to for its grade (first keyword match wins). Calibrated to Form
+# King's weightForAgeRating distribution; tune to taste.
+CLASS_PAR_BASELINE = [
+    ("group 1", 82.0), ("group 2", 80.0), ("group 3", 78.0), ("listed", 77.0),
+    ("stakes", 77.0), ("benchmark 84", 74.0), ("open", 73.0),
+    ("benchmark 78", 72.0), ("saturday", 72.0), ("metro", 72.0),
+    ("benchmark 70", 69.0), ("midweek", 69.0),
+    ("benchmark 64", 66.0), ("provincial", 66.0),
+    ("class 1", 63.0), ("class 2", 63.0),
+    ("benchmark 58", 62.0), ("country", 62.0),
+    ("maiden", 58.0),
+]
+
+
+def class_par_baseline(class_name):
+    """WFA baseline ability for a debutant / no-form runner of this class."""
+    cl = (class_name or "").lower()
+    for kw, par in CLASS_PAR_BASELINE:
+        if kw in cl:
+            return par
+    return 64.0
+
+
+def calculate_base_rating(last_ratings, class_name):
+    """Layer 1: recency-weighted base ability from a runner's actual past-run
+    WFA ratings (newest first). Weights 45/30/15/10 over up to the last 4 runs,
+    normalised across however many real runs exist. No runs (debutant) -> the
+    class par baseline. Barrier trials are already excluded upstream.
     """
-    center, par_wfa = _class_profile(class_name)
+    rs = [float(r) for r in (last_ratings or []) if r is not None][:4]
+    if not rs:
+        return class_par_baseline(class_name)
+    w = RECENCY_WEIGHTS[:len(rs)]
+    return sum(r * wi for r, wi in zip(rs, w)) / sum(w)
 
-    # How much better/worse than a par horse of this class, by raw rating.
-    # An unrated runner (e.g. a live first-starter with no benchmark) is scored
-    # at class par rather than crashing on float(None).
-    wr = float(wfa_rating) if wfa_rating is not None else par_wfa
-    wfa_component = (wr - par_wfa) * WFA_SENSITIVITY
 
-    # Carrying less than the 57.0kg class standard is a bonus; more is a penalty.
-    weight_component = (CLASS_STANDARD_WEIGHT - float(weight)) * WEIGHT_SENSITIVITY
+def _weight_mod(weight):
+    """Layer 3 weight pull: (57.0 - kg) * 0.38 (lighter = plus, heavier = minus)."""
+    try:
+        return (CLASS_STANDARD_WEIGHT - float(weight)) * WEIGHT_PER_KG
+    except (TypeError, ValueError):
+        return 0.0
 
-    # Reserved for future distance-suitability form; neutral in Phase 2.
-    distance_component = 0.0
 
-    score = center + wfa_component + weight_component + distance_component
+def _barrier_mod(barrier):
+    """Layer 3 tactical/barrier nudge: inside draw a small plus, very wide a minus."""
+    try:
+        b = int(barrier)
+    except (TypeError, ValueError):
+        return 0.0
+    if 1 <= b <= 4:
+        return 1.0
+    if b >= 10:
+        return -1.0
+    return 0.0
+
+
+def _pace_mod(last_ratings, last_positions):
+    """Layer 2 (light): a recent run that rated well but finished out the back
+    (an unlucky / pace-victim run) earns a small merit upgrade so a non-winner
+    can out-rate a winner."""
+    rs = [r for r in (last_ratings or []) if r is not None]
+    if not rs or not last_positions or last_positions[0] is None or last_ratings[0] is None:
+        return 0.0
+    avg = sum(rs) / len(rs)
+    if last_ratings[0] >= avg + 3.0 and last_positions[0] >= 5:
+        return 1.2
+    return 0.0
+
+
+def calculate_0_to_100_score(wfa_rating, weight, distance, class_name,
+                             last_ratings=None, barrier=None, last_positions=None):
+    """Absolute 0-100 WFA ability score (3-layer engine).
+
+    Layer 1  recency-weighted base from the runner's ACTUAL past-run WFA ratings
+             (newest first); a debutant / no-form runner anchors to class par.
+    Layer 2  a light pace-victim merit upgrade (non-winner out-rating).
+    Layer 3  weight pull (57kg benchmark, 0.38 pts/kg) + a small barrier nudge.
+
+    Passing no past runs falls back to the legacy single-rating path, so callers
+    that only have today's wfa_rating still work.
+    """
+    if last_ratings is not None:
+        base = calculate_base_rating(last_ratings, class_name)
+        base += _pace_mod(last_ratings, last_positions)
+    else:
+        center, par_wfa = _class_profile(class_name)
+        wr = float(wfa_rating) if wfa_rating is not None else par_wfa
+        base = center + (wr - par_wfa) * WFA_SENSITIVITY
+
+    score = base + _weight_mod(weight) + _barrier_mod(barrier)
     return round(_clamp(score), 1)
 
 

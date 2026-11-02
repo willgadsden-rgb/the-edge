@@ -2295,7 +2295,7 @@ with tabset:
                     help="Adjust ratings for the day's track pattern (e.g. a gutter favouring "
                          "wider lanes) detected from completed races.")
     st.markdown("#### ⚡ Market Anchoring (Bayesian Shrinkage)")
-    mw = st.slider("Market Anchor Weight", min_value=0.0, max_value=1.0,
+    mw = st.slider("Market Anchor Weight", min_value=0.50, max_value=0.85,
                    value=DEFAULT_MARKET_WEIGHT, step=0.05, key="market_weight",
                    help="Blends live market odds with model projections. 0.70 = 70% live market "
                         "consensus, 30% proprietary model. Eliminates unrealistic phantom overlays.")

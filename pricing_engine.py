@@ -18,6 +18,10 @@ from database import get_connection
 # score gap of ~35 points to roughly a 25x win-probability ratio.
 TEMPERATURE = 12.0
 
+# Calibrated softmax temperature for the market-blend model probability (sharper
+# than the legacy book so clear top picks get a realistic win chance).
+BLEND_TEMPERATURE = 2.1
+
 # Minimum value edge to flag a runner as a positive-EV overlay.
 OVERLAY_EDGE = 0.20
 
@@ -102,7 +106,7 @@ def calculate_blended_fair_prices(runners, market_weight=0.70):
     if not active:
         return {}
     ids = [r["id"] for r in active]
-    p_model = dict(zip(ids, _softmax([r["score"] for r in active])))
+    p_model = dict(zip(ids, _softmax([r["score"] for r in active], BLEND_TEMPERATURE)))
     p_market = devig_market_odds(active)
     w = market_weight if p_market else 0.0   # no market -> pure model
 
