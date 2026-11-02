@@ -162,8 +162,8 @@ def evaluate_race(conn, race, meeting):
         cells.append(_color(_pad("{:.1f}".format(r["score_0_to_100"]), 6, ">"), BOLD))
         cells.append(_color(trend_text, trend_code))
         cells.append(_color(_pad(m["tag"], 22, "<"), _tag_color(m["tag"])))
-        cells.append(_pad("${:.2f}".format(r["fair_odds"]), 8, ">"))
-        cells.append(_pad("${:.2f}".format(r["market_odds"]), 7, ">"))
+        cells.append(_pad("${:.2f}".format(r["fair_odds"]) if r["fair_odds"] is not None else "—", 8, ">"))
+        cells.append(_pad("${:.2f}".format(r["market_odds"]) if r["market_odds"] is not None else "—", 7, ">"))
         cells.append(_value_cell(r["edge"], r["flag"]))
         print(" ".join(cells))
 

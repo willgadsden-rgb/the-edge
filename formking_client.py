@@ -32,6 +32,11 @@ import os
 
 import requests
 
+# Reason the most recent live fetch fell back to mock (None when live succeeded
+# or mock is the configured source). ingest.load_meetings() sets it; the app's
+# Settings badge reads it so a failed live pull is diagnosable, not silent.
+LAST_FETCH_ERROR = None
+
 _TIMEOUT = 25                       # per-request network timeout (seconds)
 _UPCOMING_PATH = "/b2c/meetings/upcoming"
 _SUMMARY_PATH = "/b2c/meetings/{meeting_id}"   # full races + runners (5 credits)
@@ -166,6 +171,11 @@ def _map_entry(entry):
     name = horse.get("name")
     if not name:
         return None
+    # A runner with no market price can't be priced against the book, so skip it
+    # (the model, like the mock card, assumes every runner carries market_odds).
+    odds = _odds(entry)
+    if odds is None:
+        return None
     prep = entry.get("raceInPrep")
     return {
         "horse_name":   name,
@@ -173,7 +183,7 @@ def _map_entry(entry):
         "weight":       _weight(entry),
         "prep_run_num": int(prep) if prep else 1,
         "wfa_rating":   entry.get("benchmarkRating"),
-        "market_odds":  _odds(entry),
+        "market_odds":  odds,
     }
 
 

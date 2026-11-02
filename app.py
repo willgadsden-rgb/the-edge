@@ -2041,8 +2041,15 @@ with tabset:
     st.divider()
     # Data source: locally generated mock cards, or the live Form King feed.
     if formking_client.is_live():
-        st.success("**Data source: LIVE** — real cards from the Form King API. "
-                   "Controlled by the `DATA_SOURCE` secret; the public repo defaults to mock.")
+        err = getattr(formking_client, "LAST_FETCH_ERROR", None)
+        if err:
+            st.error("**Data source: LIVE requested — but the last fetch fell back to MOCK.**\n\n"
+                     "Reason: `{}`\n\n"
+                     "Check `FORMKING_API_KEY` (no stray spaces) and your Form King credits in "
+                     "Streamlit secrets, then hit **Rebuild** in the sidebar.".format(err))
+        else:
+            st.success("**Data source: LIVE** — real cards from the Form King API. "
+                       "Controlled by the `DATA_SOURCE` secret; the public repo defaults to mock.")
     else:
         st.info("**Data source: MOCK** — locally generated cards, no external API calls. "
                 "To go live, set `DATA_SOURCE=\"live\"` and your Form King key in Streamlit "

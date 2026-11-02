@@ -63,7 +63,10 @@ def calculate_0_to_100_score(wfa_rating, weight, distance, class_name):
     center, par_wfa = _class_profile(class_name)
 
     # How much better/worse than a par horse of this class, by raw rating.
-    wfa_component = (float(wfa_rating) - par_wfa) * WFA_SENSITIVITY
+    # An unrated runner (e.g. a live first-starter with no benchmark) is scored
+    # at class par rather than crashing on float(None).
+    wr = float(wfa_rating) if wfa_rating is not None else par_wfa
+    wfa_component = (wr - par_wfa) * WFA_SENSITIVITY
 
     # Carrying less than the 57.0kg class standard is a bonus; more is a penalty.
     weight_component = (CLASS_STANDARD_WEIGHT - float(weight)) * WEIGHT_SENSITIVITY

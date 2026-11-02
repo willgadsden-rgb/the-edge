@@ -5,6 +5,8 @@ racing.db. Running this module rebuilds the schema and re-inserts the data so
 it is safe to run repeatedly during development.
 """
 
+import sys
+
 import formking_client
 from database import get_connection, init_db
 from mock_data_generator import generate_meetings
@@ -21,11 +23,18 @@ def load_meetings():
         try:
             meetings = formking_client.fetch_live_meetings()
             if meetings:
+                formking_client.LAST_FETCH_ERROR = None
                 print(f"  data source:       Form King (live) — {len(meetings)} meetings")
                 return meetings
-            print("  data source:       live returned no meetings — using mock data")
+            formking_client.LAST_FETCH_ERROR = "Form King returned no meetings."
+            print("  data source:       live returned no meetings — using mock data",
+                  file=sys.stderr)
         except Exception as exc:  # network / auth / mapping error: degrade gracefully
-            print(f"  data source:       live fetch failed ({exc}) — using mock data")
+            formking_client.LAST_FETCH_ERROR = str(exc)
+            # stderr so it survives the stdout redirect in app.rebuild_data() and
+            # shows up in the Streamlit Cloud logs.
+            print(f"  data source:       live fetch failed ({exc}) — using mock data",
+                  file=sys.stderr)
     return generate_meetings()
 
 
