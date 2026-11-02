@@ -96,10 +96,30 @@ def ingest_meeting(data, conn):
     return {"meetings": 1, "races": race_count, "entries": entry_count}
 
 
+def _dedupe_meetings(meetings):
+    """Collapse meetings that resolve to the same canonical (track, date).
+
+    The Form King feed can list one physical meeting under more than one id,
+    sometimes with differing `date` values, so a feed-level id/date dedupe misses
+    them. After mapping, those twins share the same track_name + meeting_date
+    (which is exactly what the card shows), so dedupe on that ground truth here —
+    a track never holds two meetings on one date. Keeps the first occurrence.
+    """
+    seen, unique = set(), []
+    for data in meetings:
+        m = data["meeting"]
+        key = ((m.get("track_name") or "").strip().lower(), m.get("meeting_date"))
+        if key[0] and key in seen:
+            continue
+        seen.add(key)
+        unique.append(data)
+    return unique
+
+
 def main():
     # Reset so each ingest run starts from a clean, known state.
     init_db(reset=True)
-    meetings = load_meetings()
+    meetings = _dedupe_meetings(load_meetings())
 
     totals = {"meetings": 0, "races": 0, "entries": 0}
     conn = get_connection()
