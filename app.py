@@ -21,6 +21,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+import formking_client
 import ingest
 import run_model
 import ledger_tracker
@@ -2038,8 +2039,16 @@ with tabset:
                     help="Adjust ratings for the day's track pattern (e.g. a gutter favouring "
                          "wider lanes) detected from completed races.")
     st.divider()
+    # Data source: locally generated mock cards, or the live Form King feed.
+    if formking_client.is_live():
+        st.success("**Data source: LIVE** — real cards from the Form King API. "
+                   "Controlled by the `DATA_SOURCE` secret; the public repo defaults to mock.")
+    else:
+        st.info("**Data source: MOCK** — locally generated cards, no external API calls. "
+                "To go live, set `DATA_SOURCE=\"live\"` and your Form King key in Streamlit "
+                "secrets (see `.streamlit/secrets.toml.example`).")
     st.caption("Value & MAO use net-of-commission effective odds. Pricing re-normalises to 100% "
-               "on every change. Mock data only — no external API (see project rules).")
+               "on every change.")
 
 
 def _render_signals_box(rows, race, races, race_id, par, track_bias, mgr):

@@ -15,6 +15,7 @@ racing.db
 # Local artifacts
 *.mov
 *.pdf
+*.zip
 
 # OS / editor
 .DS_Store

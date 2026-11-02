@@ -17,6 +17,30 @@ streamlit run app.py
 The SQLite database (`racing.db`) is generated automatically on first run, so you
 don't need to seed anything.
 
+## Live data (Phase 4 — Form King)
+
+The app ships on **mock data** and makes no external calls by default. To run it on
+the live Form King feed:
+
+1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` (gitignored)
+   and fill in:
+   ```toml
+   DATA_SOURCE = "live"
+   FORMKING_BASE_URL = "https://api.formking.com.au"
+   FORMKING_API_KEY  = "your-secret-key"   # never commit this
+   FORMKING_MAX_MEETINGS = 4               # caps credit spend per refresh
+   ```
+2. Rebuild the card from the sidebar (**Rebuild mock card & ledger**) or rerun
+   `python ingest.py`. The current mode is shown in the **Settings** tab.
+
+On **Streamlit Community Cloud**, don't upload `secrets.toml` — paste those keys in
+*Manage app → Settings → Secrets*. Only `formking_client.py` touches Form King; the
+rating model, pricing, staking and ledger all run unchanged off `racing.db`.
+
+**Credits:** `/meetings/upcoming` is 1 credit; each meeting's full card is 5 credits,
+so a refresh costs `1 + 5 × FORMKING_MAX_MEETINGS`. If a live fetch fails (no key,
+network, API error) the app logs why and falls back to mock, so it never breaks.
+
 ## Deploy for free (so friends can view it)
 
 This is a **Python/Streamlit server app**, so it needs a host that runs Python —

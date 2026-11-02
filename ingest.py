@@ -5,8 +5,28 @@ racing.db. Running this module rebuilds the schema and re-inserts the data so
 it is safe to run repeatedly during development.
 """
 
+import formking_client
 from database import get_connection, init_db
 from mock_data_generator import generate_meetings
+
+
+def load_meetings():
+    """Return the meetings to ingest, from Form King (live) or mock data.
+
+    Honours DATA_SOURCE (see formking_client). In "live" mode a failed fetch
+    falls back to mock data so the dashboard always has something to show, and
+    the reason is printed. "mock" mode (the default) makes no outbound calls.
+    """
+    if formking_client.is_live():
+        try:
+            meetings = formking_client.fetch_live_meetings()
+            if meetings:
+                print(f"  data source:       Form King (live) — {len(meetings)} meetings")
+                return meetings
+            print("  data source:       live returned no meetings — using mock data")
+        except Exception as exc:  # network / auth / mapping error: degrade gracefully
+            print(f"  data source:       live fetch failed ({exc}) — using mock data")
+    return generate_meetings()
 
 
 def ingest_meeting(data, conn):
@@ -71,9 +91,9 @@ def ingest_meeting(data, conn):
 
 
 def main():
-    # Reset so each ingest run starts from a clean, known state in Phase 1.
+    # Reset so each ingest run starts from a clean, known state.
     init_db(reset=True)
-    meetings = generate_meetings()
+    meetings = load_meetings()
 
     totals = {"meetings": 0, "races": 0, "entries": 0}
     conn = get_connection()

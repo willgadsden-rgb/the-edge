@@ -5,7 +5,11 @@
 ## Core Architecture
 - Language: Python 3.11+
 - Database: SQLite (file: `racing.db`)
-- Mode: MOCK DATA (Phase 1–3). Do not make outbound API calls to Form King until Phase 4.
+- Mode: Defaults to **MOCK DATA** (Phase 1–3). Phase 4 live Form King ingestion is
+  wired in `formking_client.py` and activates only when `DATA_SOURCE="live"` with a
+  key in `.streamlit/secrets.toml` (or Streamlit Cloud secrets). Mock stays the
+  committed default, so the public repo never implies live calls. The API key is
+  read from secrets/env only — never hard-coded or committed.
 
 ## Core Rules & Schema Standards
 1. Database tables:
