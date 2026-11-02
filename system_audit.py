@@ -163,12 +163,12 @@ def chk_nl_assistant():
 
 
 def chk_geometry():
-    straight = geometry_for("Flemington", 1200)
-    bend = geometry_for("Flemington", 1600)
-    ok = (straight["turn_direction"] == "straight"
-          and bend["turn_direction"] == "left" and bend["run_to_turn_m"] == 600)
-    return (ok, "1200m={}, 1600m bend@{}m {}".format(
-        straight["turn_direction"], bend["run_to_turn_m"], bend["turn_direction"]))
+    # Simplified geometry: every race is a straight run, no bends (temporary).
+    a = geometry_for("Flemington", 1200)
+    b = geometry_for("Geelong", 1600)
+    ok = (a["turn_direction"] == "straight" and a["run_to_turn_m"] is None
+          and b["turn_direction"] == "straight" and b["shown_m"] == 400.0)
+    return ok, "straight {:.0f}m run for all tracks (no bends)".format(a["shown_m"])
 
 
 def chk_benchmark_par():
@@ -330,19 +330,14 @@ def chk_net_commission():
 
 
 def chk_track_geometry_stages():
-    import math as _m
-    g = geometry_for("Flemington", 1600)
-    L1, R = g["run_to_turn_m"], g["turn_radius"]
-    L2 = L1 + R * _m.pi / 2
-    a1, a2 = sm.track_point(L1 - 0.01, 12, g), sm.track_point(L1 + 0.01, 12, g)
-    b1, b2 = sm.track_point(L2 - 0.01, 12, g), sm.track_point(L2 + 0.01, 12, g)
-    cont = (abs(a1[0] - a2[0]) < 0.2 and abs(a1[1] - a2[1]) < 0.2
-            and abs(b1[0] - b2[0]) < 0.2 and abs(b1[1] - b2[1]) < 0.2)
-    jump = sm.track_point(0, 0, g)
-    home = sm.track_point(L2 + 150, 0, g)        # should run north up the home straight
-    stages_ok = jump[0] < 10 and home[1] > R + 100 and sm.fan_lane(1, sm.ZONE_BACK, "", 9, 10) >= 4
-    return (cont and stages_ok,
-            "back straight -> bend -> home straight continuous; backmarkers fan wide off corner")
+    # Simplified: a straight run advances along x with no lateral drift (no bend).
+    g = geometry_for("Geelong", 1600)
+    pts = [sm.track_point(d, 6, g) for d in (0.0, 200.0, 400.0)]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    straight = xs[0] < xs[1] < xs[2] and abs(ys[0] - ys[2]) < 1e-9
+    ok = straight and sm.fan_lane(1, sm.ZONE_BACK, "", 9, 10) >= 4
+    return ok, "straight run: x advances 0->{:.0f}m, no lateral drift; backmarkers still fan".format(xs[2])
 
 
 def chk_hard_cap():
@@ -470,11 +465,10 @@ def chk_shrinkage():
 
 
 def chk_ballarat_geometry():
-    """Ballarat <=1100m runs straight ~380m before the bend (not out of stalls)."""
+    """Simplified geometry: every race (incl. Ballarat) is a straight run."""
     g = geometry_for("Ballarat", 1000)
-    ok = abs(g["run_to_turn_m"] - 380.0) < 1e-6 and g["turn_direction"] == "left"
-    return ok, "Ballarat 1000m: {:.0f}m straight before a {} bend".format(
-        g["run_to_turn_m"], g["turn_direction"])
+    ok = g["run_to_turn_m"] is None and g["turn_direction"] == "straight" and g["shown_m"] == 400.0
+    return ok, "Ballarat 1000m: straight {:.0f}m run (no bend)".format(g["shown_m"])
 
 
 def main():

@@ -235,34 +235,22 @@ DEFAULT_HOME_STRAIGHT = 350.0
 DEFAULT_RADIUS = 215.0
 
 
-def geometry_for(track_name, distance):
-    """Return the track-geometry spec for a race.
+# TEMP simplification: Form King supplies no track geometry (circumference,
+# straight length or bend radius), so until a real per-track dimensions table is
+# wired in, every speed map is drawn as a single straight run of this many metres
+# with no bends. The per-track tables above are kept for when it's restored.
+STRAIGHT_RUN_M = 400.0
 
-    Explicit entries in TRACK_GEOMETRY win (e.g. Flemington's straight six). Any
-    other race gets its own course shape: the state-correct turn direction (NSW &
-    QLD clockwise, elsewhere anti-clockwise), the track's home-turn radius and home
-    straight, and the real distance from the jump to the first turn.
-    """
-    geom = TRACK_GEOMETRY.get((track_name, distance))
-    if geom is not None:
-        return geom
-    direction = "right" if track_name in CLOCKWISE_TRACKS else "left"
-    radius = float(TRACK_RADIUS.get(track_name, DEFAULT_RADIUS))
-    home = float(TRACK_HOME_STRAIGHT.get(track_name, DEFAULT_HOME_STRAIGHT))
-    run_to_turn = float(FIRST_TURN.get((track_name, distance), max(260.0, min(520.0, distance * 0.3))))
-    # Ballarat (~1,900m circuit, 450m home straight): a 1000m-ish sprint jumps in a
-    # side chute and runs straight ~380m before the sweeping home turn — it must
-    # not bend out of the stalls.
-    if track_name == "Ballarat" and distance <= 1100:
-        run_to_turn = 380.0
-    arc = radius * math.pi / 2.0
-    straighten = run_to_turn + arc
+
+def geometry_for(track_name, distance):
+    """Simplified geometry: a straight STRAIGHT_RUN_M run (no bends) for every
+    race. Form King gives no track shape, so rather than fake a generic oval the
+    map just shows the horses running a straight line off the jump."""
     return {
-        "label": "{} {}m — ~{:.0f}m to the first turn, {:.0f}m home straight".format(
-            track_name, distance, run_to_turn, home),
-        "run_to_turn_m": run_to_turn, "turn_direction": direction,
-        "turn_radius": radius, "shown_m": straighten + max(300.0, home * 0.8),
-        "total_m": distance, "straighten_m": straighten, "home_straight_m": home,
+        "label": "{} {}m — straight {:.0f}m run".format(track_name, distance, STRAIGHT_RUN_M),
+        "run_to_turn_m": None, "turn_direction": "straight", "turn_radius": None,
+        "shown_m": STRAIGHT_RUN_M, "total_m": distance,
+        "straighten_m": STRAIGHT_RUN_M, "home_straight_m": STRAIGHT_RUN_M,
     }
 
 
