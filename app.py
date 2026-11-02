@@ -1914,7 +1914,7 @@ def render_runner_card(r, race, cloth):
             '<div class="rc-proj {pcls}" title="Projected rating after today\'s adjustments, and how far it sits above (+) or below (-) the par score needed to win this class.">Projected: {proj:.1f} (vs Par: {delta:+.1f})</div>'
             '{tac}{prep}{angles}{cust}{env}{form}'.format(
                 cloth=cloth[r["horse_name"]], name=r["horse_name"], bar=r["barrier"],
-                wt=r["weight"], score=r["score_0_to_100"], pcls=proj_cls,
+                wt=r["weight"], score=r["base"], pcls=proj_cls,
                 silk=silks_engine.silk_data_uri(r["horse_name"]),
                 jky=silks_engine.jockey_for(r["horse_name"]),
                 proj=r["projected"], delta=r["par_delta"], tac=_tactical_line(r),
