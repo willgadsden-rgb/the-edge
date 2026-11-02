@@ -16,6 +16,10 @@ import hashlib
 import io
 import math
 import random
+from zoneinfo import ZoneInfo
+
+# All race timing is anchored to the Australian racing clock.
+MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 import pandas as pd
 import streamlit as st
@@ -37,7 +41,8 @@ import track_rail_profiles
 import track_play_engine
 import exotics_engine
 import silks_engine
-from database import get_connection, geometry_for, par_for
+import sync_formking
+from database import get_connection, geometry_for, par_for, init_db
 from pricing_engine import fair_book_from_scores, effective_odds, commission_for_state
 from staking_engine import (calculate_stake, calculate_mao, is_void, TARGET_PROFIT,
                             STAKE_CONSUMER, STAKE_SYNDICATE, DEFAULT_BANKROLL)
@@ -285,18 +290,16 @@ def _has_data():
 
 
 def rebuild_data():
+    """Rebuild the card from the live Form King feed. Raises on a feed failure
+    (callers surface st.error). No simulated bets or results are seeded — the
+    user ledger starts empty and settles only from live results."""
     with contextlib.redirect_stdout(io.StringIO()):
-        ingest.main()
-        run_model.main()
-        ledger_tracker.log_recommended_bets()
-        ledger_tracker.simulate_results_and_clv(seed=DEMO_SEED)
+        ingest.main()           # strict live-only; raises on a feed error
+        run_model.main()        # score + 100% fair pricing
+        ledger_tracker.log_recommended_bets()  # model value picks (no fake $/results)
     conn = get_connection()
     try:
         lme.seed_if_empty(conn)
-        conn.execute("UPDATE meetings SET meeting_date = ? WHERE meeting_date IS NULL",
-                     ("2026-10-25",))
-        conn.commit()
-        intraday_engine.settle_results(conn, seed=DEMO_SEED)
         silks_engine.assign_saddlecloths_and_silks(conn)
     finally:
         conn.close()
@@ -330,7 +333,16 @@ def race_tempo(entries, race):
 
 def ensure_data(force=False):
     if force or not _has_data():
-        rebuild_data()
+        try:
+            rebuild_data()
+        except Exception as exc:
+            # Strict live-only: no mock fallback. Surface the feed error and halt
+            # rather than render fabricated runners.
+            formking_client.LAST_FETCH_ERROR = str(exc)
+            st.error("🔴 Live Form King Feed Error: {}".format(exc))
+            st.caption("The dashboard runs strictly on live Form King data — no mock fallback. "
+                       "Check the API key and credits in Settings → Secrets, then Rebuild.")
+            st.stop()
     conn = get_connection()
     try:
         lme.seed_if_empty(conn)
@@ -400,6 +412,59 @@ def scratched_for(race_id, entries):
             if st.session_state.get("scr_{}_{}".format(race_id, e["entry_id"]), False)]
 
 
+# -----------------------------------------------------------------------------
+# Interactive syndicate bet ledger (user_bets)
+# -----------------------------------------------------------------------------
+def log_user_bet(bet):
+    """Insert one operator bet into user_bets (status PENDING)."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO user_bets
+                 (meeting_id, race_id, track_name, race_number, runner_id, horse_name,
+                  saddlecloth, bet_mode, target_win, stake, odds_taken, fair_odds, edge_at_bet)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (str(bet["meeting_id"]), str(bet["race_id"]), bet["track_name"], bet["race_number"],
+             str(bet["runner_id"]), bet["horse_name"], bet["saddlecloth"], bet["bet_mode"],
+             bet["target_win"], bet["stake"], bet["odds_taken"], bet["fair_odds"], bet["edge_at_bet"]))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_user_bets():
+    conn = get_connection()
+    try:
+        return [dict(x) for x in conn.execute(
+            "SELECT * FROM user_bets ORDER BY placed_at DESC, bet_id DESC").fetchall()]
+    finally:
+        conn.close()
+
+
+def cancel_user_bet(bet_id):
+    """Remove a still-pending bet (settled bets are immutable)."""
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM user_bets WHERE bet_id=? AND status='PENDING'", (bet_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ledger_metrics(bets):
+    """Active outlay, settled P&L, ROI% and strike rate for the bet ledger."""
+    pending = [b for b in bets if b["status"] == "PENDING"]
+    settled = [b for b in bets if b["status"] in ("WON", "LOST")]
+    active_outlay = sum((b["stake"] or 0.0) for b in pending)
+    settled_pnl = sum((b["net_pnl"] or 0.0) for b in settled)
+    settled_outlay = sum((b["stake"] or 0.0) for b in settled)
+    roi = (settled_pnl / settled_outlay * 100.0) if settled_outlay else 0.0
+    won = [b for b in settled if b["status"] == "WON"]
+    strike = (len(won) / len(settled) * 100.0) if settled else 0.0
+    return {"active_outlay": active_outlay, "settled_pnl": settled_pnl, "roi": roi,
+            "strike": strike, "n_settled": len(settled), "n_pending": len(pending)}
+
+
 def race_markets(race_id):
     conn = get_connection()
     try:
@@ -466,13 +531,15 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
             e["horse_name"], base, e["prep_run_num"], cond, race["distance"],
             situational_points=ap + env_pts, manual_override_points=manual,
             unclamped_points=custom_pts)
-        traj = generate_trajectory(e["horse_name"], base, n=5)
+        # Debutant (0 career starts): never fabricate a ratings trajectory.
+        is_debut = (e.get("career_starts") == 0)
+        traj = [] if is_debut else generate_trajectory(e["horse_name"], base, n=5)
         hist = angle_engine.synth_history(e["horse_name"], race["distance"])
         computed[e["entry_id"]] = dict(
             base=base, pos=pos, angles=angles, ap=ap,
             custom_badges=custom_badges, env_badges=env_badges,
-            manual=manual, projected=projected, traj=traj,
-            trend=trajectory_trend(traj), tactical=tac,
+            manual=manual, projected=projected, traj=traj, is_debut=is_debut,
+            trend=(0.0 if is_debut else trajectory_trend(traj)), tactical=tac,
             form_delta=round(prep["prep_adjustment"], 1),
             cond_delta=condition_affinity(e["horse_name"], cond),
             dist_delta=distance_affinity(e["horse_name"], race["distance"]),
@@ -493,7 +560,7 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
                   "env_badges": c["env_badges"],
                   "manual": c["manual"], "projected": c["projected"],
                   "par": par, "par_delta": round(c["projected"] - par, 1), "cond": cond,
-                  "traj": c["traj"], "trend": c["trend"],
+                  "traj": c["traj"], "trend": c["trend"], "is_debut": c["is_debut"],
                   "lane": tac.get("lane"), "lane_name": tac.get("lane_name", "-"),
                   "settle_zone": tac.get("zone", "-"),
                   "tactical_tag": tac.get("tag", "-"), "tactical_blurb": tac.get("tag_blurb", "-"),
@@ -1368,6 +1435,12 @@ def _form_blocks(trajectory, par=None, positions=None):
     so "green = good enough to win this grade", amber = thereabouts, red = below.
     `positions` (newest-first finishing positions) are shown under each rating.
     """
+    # Debutant: no past runs. Show a single clean badge, never fabricated pills.
+    if not trajectory:
+        return ('<div class="chip-grid">'
+                '<span class="rec-chip hot">🆕 DEBUT</span>'
+                '<span class="rec-chip"><span class="rv">1st career start · • UNEXPOSED</span></span>'
+                '</div>')
     newest_first = list(reversed(trajectory))          # trajectory stored oldest->newest
     info = classify_trajectory(newest_first)
     labels = ["L1 (Latest)", "L2", "L3", "L4", "L5"]
@@ -1589,20 +1662,23 @@ def _render_career_drawer(r, race):
                             help="Applies instantly to this runner's projected score, fair price and edge.")
 
         with t_runs:
-            st.caption("The last 5 starts — what the horse rated, where it finished, its last-600m split, "
-                       "and the prep stage at each run (newest first).")
-            df5 = pd.DataFrame([{
-                "Run": "L{}".format(i + 1), "Prep stage": run["stage"], "Trip": "{}m".format(run["dist"]),
-                "Going": run["going"], "Rated": int(round(run["rating"])), "Finish": _ord(run["pos"]),
-                "L600m": "{:.2f}s".format(run["last600"]),
-            } for i, run in enumerate(runs)])
-            st.dataframe(df5, use_container_width=True, hide_index=True, column_config={
-                "Rated": st.column_config.NumberColumn("Rated", help="The 0-100 rating earned that day."),
-                "Finish": st.column_config.TextColumn("Finish", help="Finishing position that day."),
-                "L600m": st.column_config.TextColumn("L600m", help="Last-600m sectional split."),
-                "Prep stage": st.column_config.TextColumn("Prep stage", help="1st up / 2nd up … or Spell (a break)."),
-            })
-            st.caption("ℹ️ The RISING/EASING trend on the card is the slope of these last-5 ratings.")
+            if r.get("is_debut") or not runs:
+                st.info("🆕 **Debutant — 1st career start.** No prior race form to show.")
+            else:
+                st.caption("The last 5 starts — what the horse rated, where it finished, its last-600m split, "
+                           "and the prep stage at each run (newest first).")
+                df5 = pd.DataFrame([{
+                    "Run": "L{}".format(i + 1), "Prep stage": run["stage"], "Trip": "{}m".format(run["dist"]),
+                    "Going": run["going"], "Rated": int(round(run["rating"])), "Finish": _ord(run["pos"]),
+                    "L600m": "{:.2f}s".format(run["last600"]),
+                } for i, run in enumerate(runs)])
+                st.dataframe(df5, use_container_width=True, hide_index=True, column_config={
+                    "Rated": st.column_config.NumberColumn("Rated", help="The 0-100 rating earned that day."),
+                    "Finish": st.column_config.TextColumn("Finish", help="Finishing position that day."),
+                    "L600m": st.column_config.TextColumn("L600m", help="Last-600m sectional split."),
+                    "Prep stage": st.column_config.TextColumn("Prep stage", help="1st up / 2nd up … or Spell (a break)."),
+                })
+                st.caption("ℹ️ The RISING/EASING trend on the card is the slope of these last-5 ratings.")
 
 
 _RFS = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th+"}
@@ -1681,6 +1757,78 @@ def render_worksheet(rows, race, cloth):
         st.rerun()
     st.caption("Edit **User+/-** or **Scr** to re-score instantly — the fair book re-normalises to 100% "
                "and every price/edge updates. Base + clamped Angles + User +/- = Projected.")
+
+
+def render_bet_slip(r, race):
+    """Interactive bet slip on a runner card: log a To-Win or Fixed-Stake bet
+    into the syndicate ledger, with live stake/return/edge metrics."""
+    rid = r["entry_id"]
+    fair = r.get("disp_fair")
+    with st.expander("🎯 LOG BET — {}".format(r["horse_name"])):
+        mode = st.radio("Bet mode", ["🎯 To Win $", "💵 Fixed Stake"], horizontal=True,
+                        key="bm_{}".format(rid))
+        default_odds = float(r.get("market") or fair or 2.0)
+        odds = st.number_input("Odds taken", min_value=1.01, value=round(default_odds, 2),
+                               step=0.1, key="odds_{}".format(rid),
+                               help="Pre-filled with the current market price; edit to the price you took.")
+        if mode.startswith("🎯"):
+            target = st.number_input("Target win ($)", min_value=1.0, value=100.0, step=10.0,
+                                     key="tw_{}".format(rid))
+            stake = target / (odds - 1.0) if odds > 1.0 else 0.0
+        else:
+            stake = st.number_input("Stake ($)", min_value=1.0, value=50.0, step=10.0,
+                                    key="stk_{}".format(rid))
+            target = stake * (odds - 1.0)
+        edge = ((odds / fair) - 1.0) if fair else None
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Stake", "${:.2f}".format(stake))
+        m2.metric("Potential return", "${:.2f}".format(stake * odds))
+        m3.metric("Edge @ bet", "{:+.1f}%".format(edge * 100) if edge is not None else "—")
+        if edge is not None and edge > 0:
+            st.success("🟢 +EV — {:+.1f}% over fair (${:.2f}).".format(edge * 100, fair))
+        if st.button("💾 Confirm & Log Bet", key="log_{}".format(rid), use_container_width=True):
+            log_user_bet({
+                "meeting_id": meeting["meeting_id"], "race_id": race["race_id"],
+                "track_name": meeting["track_name"], "race_number": race["race_number"],
+                "runner_id": rid, "horse_name": r["horse_name"],
+                "saddlecloth": r.get("saddlecloth"), "bet_mode": "TO_WIN" if mode.startswith("🎯") else "STAKE",
+                "target_win": round(target, 2), "stake": round(stake, 2), "odds_taken": round(odds, 2),
+                "fair_odds": round(fair, 2) if fair else None, "edge_at_bet": edge})
+            st.toast("✅ Logged {} @ ${:.2f} — stake ${:.2f}".format(r["horse_name"], odds, stake))
+            st.rerun()
+
+
+def render_bet_ledger():
+    """Sidebar drawer: the syndicate bet ledger — live metrics, table, cancel."""
+    sync_formking.settle_pending_bets()   # settle any bets whose results are in
+    bets = load_user_bets()
+    with st.sidebar.expander("💼 Syndicate Bet Ledger ({})".format(len(bets)), expanded=False):
+        mx = ledger_metrics(bets)
+        a, b = st.columns(2)
+        a.metric("Active outlay", "${:,.2f}".format(mx["active_outlay"]),
+                 help="Total stake across all PENDING bets.")
+        b.metric("Settled P&L", "${:,.2f}".format(mx["settled_pnl"]),
+                 delta="{:+.2f}".format(mx["settled_pnl"]) if mx["n_settled"] else None)
+        c, d = st.columns(2)
+        c.metric("ROI", "{:+.1f}%".format(mx["roi"]) if mx["n_settled"] else "—")
+        d.metric("Strike rate", "{:.0f}%".format(mx["strike"]) if mx["n_settled"] else "—")
+        if not bets:
+            st.caption("No bets logged yet. Open a runner card and use 🎯 LOG BET.")
+            return
+        df = pd.DataFrame([{
+            "Bet": "{} R{} · {}".format(b["track_name"], b["race_number"], b["horse_name"]),
+            "Mode": b["bet_mode"], "Stake": "${:.2f}".format(b["stake"] or 0),
+            "Odds": "${:.2f}".format(b["odds_taken"] or 0), "Status": b["status"],
+            "P&L": "${:+.2f}".format(b["net_pnl"] or 0) if b["status"] in ("WON", "LOST") else "—",
+        } for b in bets])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        pend = [b for b in bets if b["status"] == "PENDING"]
+        if pend:
+            opts = {"#{} {} R{} · {}".format(b["bet_id"], b["track_name"], b["race_number"], b["horse_name"]): b["bet_id"]
+                    for b in pend}
+            sel = st.selectbox("Cancel a pending bet", ["—"] + list(opts), key="cancel_sel")
+            if sel != "—" and st.button("❌ Cancel Bet", key="cancel_btn", use_container_width=True):
+                cancel_user_bet(opts[sel]); st.rerun()
 
 
 def render_runner_card(r, race, cloth):
@@ -1767,20 +1915,28 @@ def render_runner_card(r, race, cloth):
 # -----------------------------------------------------------------------------
 # Sidebar
 # -----------------------------------------------------------------------------
+# Migrate any pre-existing racing.db to the current schema (adds jump_time,
+# career_starts, user_bets) so a DB that persisted across a redeploy never
+# crashes on a missing column before the next rebuild.
+init_db(reset=False)
 ensure_data()
 
 with st.sidebar:
     st.markdown("## 🏇 {}".format(BRAND))
-    st.caption("{} — syndicate dashboard (mock data).".format(TAGLINE))
+    st.caption("{} — live syndicate dashboard (Form King).".format(TAGLINE))
     if st.button("📡 Simulate market tick", use_container_width=True, key="tick_side",
                  help="Nudge the simulated live market — prices move and the steamer/drifter tags update."):
         do_market_tick(); st.rerun()
-    if st.button("🔄 Rebuild mock card & ledger", use_container_width=True,
-                 help="Regenerate the whole mock meeting, runners and bet ledger from scratch."):
-        rebuild_data()
-        for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
-            del st.session_state[k]
-        st.rerun()
+    if st.button("🔄 Rebuild live card", use_container_width=True,
+                 help="Re-fetch the current card from the live Form King feed and re-price it."):
+        try:
+            rebuild_data()
+            for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
+                del st.session_state[k]
+            st.rerun()
+        except Exception as exc:
+            formking_client.LAST_FETCH_ERROR = str(exc)
+            st.error("🔴 Live Form King Feed Error: {}".format(exc))
     if st.button("♻️ Reset scratchings & adjustments", use_container_width=True,
                  help="Clear every scratching you ticked and every manual score override, back to the model defaults."):
         for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
@@ -1788,7 +1944,9 @@ with st.sidebar:
         st.rerun()
     st.divider()
     st.caption("⚙️ Staking, commission & surface drift now live in the **Settings** tab. "
-               "Market ticks & results are simulated locally (no external API).")
+               "Live Form King data — strict live-only, no mock fallback.")
+
+render_bet_ledger()
 
 # --- Meeting selection (home screen) --------------------------------------
 # The Race Cards tab opens as a list of meetings; clicking one sets
@@ -1829,10 +1987,42 @@ _STATE_COLOR = {"VIC": "#1f6f4a", "NSW": "#1b5e8a", "QLD": "#8a2140", "SA": "#b4
                 "WA": "#b48a15", "AUS": "#334155"}
 
 
+def _mins_to_jump(jump_ms):
+    """Minutes from now (Melbourne clock) to a race jump time (epoch ms).
+    Positive = upcoming, <=0 = already jumped. None when no jump time."""
+    if not jump_ms:
+        return None
+    return (jump_ms - datetime.datetime.now(MELBOURNE).timestamp() * 1000) / 60000.0
+
+
+def _race_clock(jump_ms, completed=False):
+    """Human jump-clock label for a single race on the Melbourne clock."""
+    mins = _mins_to_jump(jump_ms)
+    if mins is None:
+        return "—"
+    if mins > 0:
+        return "⏱️ {:.0f} min{} to jump".format(mins, "" if mins < 1.5 else "s")
+    ago = -mins
+    if completed or ago >= 60:
+        return "🏁 COMPLETED" + ("" if not ago else " · {:.0f}m ago".format(ago))
+    return "🏁 JUMPED · {:.0f}m ago".format(ago)
+
+
 def _next_to_jump(m):
-    """Deterministic mock 'next race number + minutes to jump' for a meeting."""
-    h = int(hashlib.md5((m["track_name"] + str(m["meeting_date"])).encode("utf-8")).hexdigest(), 16)
-    return 1 + h % max(1, m["race_count"]), 3 + h % 55
+    """Real (race_number, mins_to_jump) for a meeting's soonest upcoming race from
+    live jump times; mins<=0 means it has jumped. (1, None) when no live times."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT race_number, jump_time FROM races WHERE meeting_id=? AND jump_time IS NOT NULL "
+            "ORDER BY jump_time", (m["meeting_id"],)).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return (1, None)
+    now_ms = datetime.datetime.now(MELBOURNE).timestamp() * 1000
+    nxt = next((r for r in rows if r["jump_time"] > now_ms), rows[-1])
+    return (nxt["race_number"], _mins_to_jump(nxt["jump_time"]))
 
 
 def _meeting_row(m):
@@ -1840,9 +2030,17 @@ def _meeting_row(m):
     bkt = _meeting_status(m["meeting_date"])[0]
     nr, mins = _next_to_jump(m)
     if bkt == "today":
+        if mins is None:
+            txt = "R{}".format(nr)
+        elif mins > 0:
+            txt = "R{} &middot; {:.0f}m".format(nr, mins)
+        elif -mins < 60:
+            txt = "R{} &middot; 🏁 JUMPED".format(nr)
+        else:
+            txt = "🏁 COMPLETED"
         nj = ('<span style="background:rgba(255,106,26,.14);color:#ff8a3d;border:1px solid rgba(255,106,26,.42);'
               'padding:5px 11px;border-radius:9px;font-weight:700;font-family:var(--mono);font-size:.82rem">'
-              'R{} &middot; {}m</span>'.format(nr, mins))
+              '{}</span>'.format(txt))
     elif bkt == "future":
         nj = ('<span style="background:var(--surf2);color:var(--dim);border:1px solid var(--line);padding:5px 11px;'
               'border-radius:9px;font-weight:600;font-size:.8rem">Opens {}</span>'.format(_fmt_date(m["meeting_date"])))
@@ -1968,7 +2166,8 @@ def render_meeting_home(meetings):
     elif sel[1] == "results":
         shown, head = past, "🏁 Results — completed meetings"
     elif sel[1] == "nextjump":
-        shown = sorted(todayfut, key=lambda m: (m["meeting_date"], _next_to_jump(m)[1]))
+        shown = sorted(todayfut, key=lambda m: (m["meeting_date"],
+                                                 _next_to_jump(m)[1] if _next_to_jump(m)[1] is not None else 9e9))
         head = "⏱ Next to Jump"
     else:
         shown, head = [m for m in meetings if m["meeting_date"] == sel[2]], _date_head(sel[2])
@@ -1999,7 +2198,9 @@ def _short_class(name):
     return name
 
 
-pill_labels = ["R{} — {}m {}".format(r["race_number"], r["distance"], _short_class(r["class_name"]))
+pill_labels = ["R{} — {}m {}{}".format(
+                   r["race_number"], r["distance"], _short_class(r["class_name"]),
+                   ("  ·  " + _race_clock(r["jump_time"], completed=bool(r["completed"]))) if r["jump_time"] else "")
                for r in races]
 label_to_race = {lbl: races[i] for i, lbl in enumerate(pill_labels)}
 
@@ -2177,6 +2378,8 @@ def _render_field(rows, race, race_id, cloth):
     else:
         for r in shown:
             render_runner_card(r, race, cloth)
+            if not r.get("scratched"):
+                render_bet_slip(r, race)
 
 
 # -----------------------------------------------------------------------------

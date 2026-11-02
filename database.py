@@ -106,6 +106,34 @@ MARKET_FLUCS_SQL = """
 """
 SCHEMA.append(MARKET_FLUCS_SQL)
 
+# Interactive syndicate bet ledger (Phase 4 live). Distinct from bets_ledger
+# (model recommendations) — these are bets the operator actually logs. It starts
+# empty: 0 bets, $0 outlay, $0 P&L, and is settled from live results.
+USER_BETS_SQL = """
+    CREATE TABLE IF NOT EXISTS user_bets (
+        bet_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        meeting_id  TEXT,
+        race_id     TEXT,
+        track_name  TEXT,
+        race_number INTEGER,
+        runner_id   TEXT,
+        horse_name  TEXT,
+        saddlecloth INTEGER,
+        bet_mode    TEXT,          -- 'TO_WIN' or 'STAKE'
+        target_win  REAL,
+        stake       REAL,
+        odds_taken  REAL,
+        fair_odds   REAL,
+        edge_at_bet REAL,
+        bsp_settled REAL,
+        status      TEXT DEFAULT 'PENDING',  -- 'PENDING','WON','LOST','SCRATCHED'
+        payout      REAL DEFAULT 0.0,
+        net_pnl     REAL DEFAULT 0.0,
+        placed_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+SCHEMA.append(USER_BETS_SQL)
+
 
 # -----------------------------------------------------------------------------
 # Benchmark "par score to win" by class (absolute 0-100 scale)
@@ -141,11 +169,13 @@ def par_for(class_name):
 MIGRATIONS = {
     "meetings": [("meeting_date", "TEXT")],
     "races": [("completed", "INTEGER NOT NULL DEFAULT 0"),
-              ("benchmark_par_time", "REAL"), ("actual_win_time", "REAL"), ("tsv", "REAL")],
+              ("benchmark_par_time", "REAL"), ("actual_win_time", "REAL"), ("tsv", "REAL"),
+              ("jump_time", "INTEGER")],  # live jump time, epoch milliseconds
     "race_entries": [("scratched", "INTEGER NOT NULL DEFAULT 0"),
                      ("finish_pos", "INTEGER"), ("beaten_lengths", "REAL"),
                      ("official_time", "REAL"), ("result_bsp", "REAL"),
-                     ("saddlecloth", "INTEGER"), ("silk_url", "TEXT"), ("silk_svg", "TEXT")],
+                     ("saddlecloth", "INTEGER"), ("silk_url", "TEXT"), ("silk_svg", "TEXT"),
+                     ("career_starts", "INTEGER")],  # live career start count; 0 = debut
     "bets_ledger": [("stake_dollars", "REAL"), ("result", "TEXT")],
 }
 
@@ -187,9 +217,9 @@ CLOCKWISE_TRACKS = {
 # Per-track shape (metres): home-straight length and home-turn radius, so each
 # course has its own geometry (tight Moonee Valley vs roomy Flemington).
 TRACK_HOME_STRAIGHT = {"Flemington": 450, "Caulfield": 367, "Rosehill": 408, "Eagle Farm": 410,
-                       "Moonee Valley": 173, "Randwick": 410, "Doomben": 320}
+                       "Moonee Valley": 173, "Randwick": 410, "Doomben": 320, "Ballarat": 450}
 TRACK_RADIUS = {"Flemington": 286, "Caulfield": 205, "Rosehill": 220, "Eagle Farm": 215,
-                "Moonee Valley": 118, "Randwick": 240, "Doomben": 150}
+                "Moonee Valley": 118, "Randwick": 240, "Doomben": 150, "Ballarat": 200}
 # Distance from the jump to the FIRST turn, per (track, distance) — the key bit a
 # punter needs to read the early race. (Flemington's straight-course sprints and
 # its 1600m live in TRACK_GEOMETRY above.)
@@ -219,6 +249,11 @@ def geometry_for(track_name, distance):
     radius = float(TRACK_RADIUS.get(track_name, DEFAULT_RADIUS))
     home = float(TRACK_HOME_STRAIGHT.get(track_name, DEFAULT_HOME_STRAIGHT))
     run_to_turn = float(FIRST_TURN.get((track_name, distance), max(260.0, min(520.0, distance * 0.3))))
+    # Ballarat (~1,900m circuit, 450m home straight): a 1000m-ish sprint jumps in a
+    # side chute and runs straight ~380m before the sweeping home turn — it must
+    # not bend out of the stalls.
+    if track_name == "Ballarat" and distance <= 1100:
+        run_to_turn = 380.0
     arc = radius * math.pi / 2.0
     straighten = run_to_turn + arc
     return {
@@ -237,6 +272,7 @@ def _table_columns(conn, table):
 def ensure_schema(conn):
     """Add any missing operational columns/tables to an existing database."""
     conn.execute(MARKET_FLUCS_SQL)  # create the flucs table if it predates this build
+    conn.execute(USER_BETS_SQL)     # create the user bet ledger if it predates this build
     for table, columns in MIGRATIONS.items():
         existing = _table_columns(conn, table)
         for name, decl in columns:

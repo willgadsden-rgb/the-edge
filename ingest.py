@@ -1,41 +1,27 @@
 """Ingestion for the Punting Intelligence Engine (PIE).
 
-Phase 1: takes the mock meeting from mock_data_generator and writes it into
-racing.db. Running this module rebuilds the schema and re-inserts the data so
-it is safe to run repeatedly during development.
+Strict live-only: fetches the card from Form King and writes it into racing.db,
+rebuilding the schema each run. There is no mock/synthetic fallback — a feed
+failure raises so the dashboard shows a live error, never fabricated runners.
 """
-
-import sys
 
 import formking_client
 from database import get_connection, init_db
-from mock_data_generator import generate_meetings
 
 
 def load_meetings():
-    """Return the meetings to ingest, from Form King (live) or mock data.
+    """Fetch the live Form King card.
 
-    Honours DATA_SOURCE (see formking_client). In "live" mode a failed fetch
-    falls back to mock data so the dashboard always has something to show, and
-    the reason is printed. "mock" mode (the default) makes no outbound calls.
+    Strict live-only: raises on any failure (missing key, API/network error, or
+    an empty feed). There is no mock fallback — the dashboard must show a live
+    feed error rather than fabricated runners (see MASTER INSTRUCTION step 1).
     """
-    if formking_client.is_live():
-        try:
-            meetings = formking_client.fetch_live_meetings()
-            if meetings:
-                formking_client.LAST_FETCH_ERROR = None
-                print(f"  data source:       Form King (live) — {len(meetings)} meetings")
-                return meetings
-            formking_client.LAST_FETCH_ERROR = "Form King returned no meetings."
-            print("  data source:       live returned no meetings — using mock data",
-                  file=sys.stderr)
-        except Exception as exc:  # network / auth / mapping error: degrade gracefully
-            formking_client.LAST_FETCH_ERROR = str(exc)
-            # stderr so it survives the stdout redirect in app.rebuild_data() and
-            # shows up in the Streamlit Cloud logs.
-            print(f"  data source:       live fetch failed ({exc}) — using mock data",
-                  file=sys.stderr)
-    return generate_meetings()
+    meetings = formking_client.fetch_live_meetings()
+    if not meetings:
+        raise RuntimeError("Form King returned no meetings for the current window.")
+    formking_client.LAST_FETCH_ERROR = None
+    print(f"  data source: Form King (live) — {len(meetings)} meetings")
+    return meetings
 
 
 def ingest_meeting(data, conn):
@@ -62,37 +48,44 @@ def ingest_meeting(data, conn):
     for race in data["races"]:
         cur.execute(
             """
-            INSERT INTO races (meeting_id, race_number, distance, class_name, pace_pressure_index)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO races (meeting_id, race_number, distance, class_name, pace_pressure_index, jump_time)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (meeting_id, race["race_number"], race["distance"],
-             race["class_name"], race["pace_pressure_index"]),
+             race["class_name"], race["pace_pressure_index"], race.get("jump_time")),
         )
         race_id = cur.lastrowid
         race_count += 1
 
         for entry in race["entries"]:
+            cs = entry.get("career_starts")
             cur.execute(
                 """
                 INSERT INTO race_entries
-                    (race_id, horse_name, barrier, weight, prep_run_num, wfa_rating, market_odds)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (race_id, horse_name, barrier, weight, prep_run_num, wfa_rating, market_odds, career_starts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (race_id, entry["horse_name"], entry["barrier"], entry["weight"],
-                 entry["prep_run_num"], entry["wfa_rating"], entry["market_odds"]),
+                 entry["prep_run_num"], entry["wfa_rating"], entry["market_odds"], cs),
             )
             entry_count += 1
 
-            # Seed a minimal prep profile from the runner's prep run number.
-            # prep_stage buckets the campaign; starts/wins/avg_score are mock.
-            prep_stage = "first-up" if entry["prep_run_num"] == 1 else "in-work"
+            # Seed the prep profile. A debutant (career_starts == 0) is tagged so
+            # the card can suppress fabricated form and show a clean DEBUT badge.
+            if cs == 0:
+                prep_stage = "debut"
+            elif entry["prep_run_num"] == 1:
+                prep_stage = "first-up"
+            else:
+                prep_stage = "in-work"
+            starts = cs if cs is not None else entry["prep_run_num"]
             cur.execute(
                 """
                 INSERT OR REPLACE INTO horse_prep_profiles
                     (horse_name, prep_stage, starts, wins, avg_score)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (entry["horse_name"], prep_stage, entry["prep_run_num"], 0, None),
+                (entry["horse_name"], prep_stage, starts, 0, None),
             )
 
     conn.commit()

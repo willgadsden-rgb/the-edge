@@ -162,6 +162,38 @@ def _weight(entry):
     return _DEFAULT_WEIGHT
 
 
+def _career_starts(entry):
+    """Career start count from Form King; 0 = debutant. None if unknown.
+
+    firstStarter is authoritative; otherwise the leading number of careerForm
+    ("16:0-1-1" -> 16 starts).
+    """
+    if entry.get("firstStarter"):
+        return 0
+    cf = (entry.get("form") or {}).get("careerForm")
+    if cf and ":" in cf:
+        try:
+            return int(cf.split(":")[0])
+        except ValueError:
+            pass
+    return None
+
+
+def _jump_time(race):
+    """Race jump time as epoch milliseconds.
+
+    Prefer Form King's advertisedStart / raceTime when numeric; otherwise the
+    race's own `date` field (epoch ms). app.py reads this against the
+    Australia/Melbourne clock to show a live countdown or JUMPED.
+    """
+    for key in ("advertisedStart", "raceTime"):
+        v = race.get(key)
+        if isinstance(v, (int, float)):
+            return int(v)
+    d = race.get("date")
+    return int(d) if isinstance(d, (int, float)) else None
+
+
 # --- mapping: Form King JSON -> ingest shape ---------------------------------
 def _map_entry(entry):
     """One runner -> ingest entry dict, or None if scratched/no name."""
@@ -178,12 +210,13 @@ def _map_entry(entry):
         return None
     prep = entry.get("raceInPrep")
     return {
-        "horse_name":   name,
-        "barrier":      int(entry.get("barrier") or 0),
-        "weight":       _weight(entry),
-        "prep_run_num": int(prep) if prep else 1,
-        "wfa_rating":   entry.get("benchmarkRating"),
-        "market_odds":  odds,
+        "horse_name":    name,
+        "barrier":       int(entry.get("barrier") or 0),
+        "weight":        _weight(entry),
+        "prep_run_num":  int(prep) if prep else 1,
+        "wfa_rating":    entry.get("benchmarkRating"),
+        "market_odds":   odds,
+        "career_starts": _career_starts(entry),
     }
 
 
@@ -197,6 +230,7 @@ def _map_race(race):
         # Form King doesn't supply a pace index; use a neutral 1.0 (mock range is
         # 0.8-1.2). Tempo is derived mainly from the speed map's leader count.
         "pace_pressure_index": 1.0,
+        "jump_time":           _jump_time(race),
         "entries":             entries,
     }
 

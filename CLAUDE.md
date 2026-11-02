@@ -5,11 +5,12 @@
 ## Core Architecture
 - Language: Python 3.11+
 - Database: SQLite (file: `racing.db`)
-- Mode: Defaults to **MOCK DATA** (Phase 1–3). Phase 4 live Form King ingestion is
-  wired in `formking_client.py` and activates only when `DATA_SOURCE="live"` with a
-  key in `.streamlit/secrets.toml` (or Streamlit Cloud secrets). Mock stays the
-  committed default, so the public repo never implies live calls. The API key is
-  read from secrets/env only — never hard-coded or committed.
+- Mode: **STRICT LIVE-ONLY** (Form King, Victorian Pro tier). All mock/synthetic
+  generators and fallbacks are removed — `formking_client.py` is the sole data
+  source and ingestion raises on any feed failure (the dashboard shows
+  `🔴 Live Form King Feed Error`, never fabricated runners). The API key is read
+  from `.streamlit/secrets.toml` / Streamlit Cloud secrets only — never hard-coded
+  or committed. Race timing uses `ZoneInfo('Australia/Melbourne')`.
 
 ## Core Rules & Schema Standards
 1. Database tables:

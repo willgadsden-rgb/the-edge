@@ -366,8 +366,88 @@ def chk_trajectory():
                 "tight band->STABLE".format(cb["label"]))
 
 
+def chk_no_mock_fallback():
+    """Strict live-only: the mock generator is gone and ingestion raises on a
+    missing feed instead of seeding fakes (MASTER INSTRUCTION step 1)."""
+    import importlib, os
+    try:
+        importlib.import_module("mock_data_generator")
+        return False, "mock_data_generator still importable"
+    except ImportError:
+        pass
+    import ingest
+    saved = {k: os.environ.pop(k, None) for k in ("FORMKING_API_KEY", "FORMKING_BASE_URL")}
+    try:
+        ingest.load_meetings()
+        return False, "load_meetings did not raise without a feed"
+    except Exception:
+        return True, "generator removed; load_meetings raises on missing feed (no mock fallback)"
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+
+
+def chk_debutant():
+    """A 0-start runner maps to career_starts 0 with no fabricated form."""
+    import formking_client as fk
+    m = fk._map_entry({"horse": {"name": "First Timer"}, "firstStarter": True,
+                       "barrier": 3, "odds": {"avgNow": 5.0}})
+    if not m or m.get("career_starts") != 0:
+        return False, "firstStarter not mapped to career_starts 0"
+    if fk._career_starts({"form": {"careerForm": "0:0-0-0"}}) != 0:
+        return False, "careerForm '0:…' not read as 0 starts"
+    if fk._career_starts({"form": {"careerForm": "16:0-1-1"}}) != 16:
+        return False, "careerForm start count misread"
+    return True, "firstStarter & careerForm 0 -> 0 starts (debut); 16:… -> 16"
+
+
+def chk_bet_math():
+    """To-Win staking stake = target / (odds - 1); fixed-stake inverse holds."""
+    target, odds = 100.0, 4.5
+    stake = target / (odds - 1.0)
+    if abs(stake - 28.571428) > 1e-4:
+        return False, "stake {:.4f}".format(stake)
+    if abs(50.0 * (odds - 1.0) - 175.0) > 1e-6:
+        return False, "fixed-stake target_win wrong"
+    return True, "To-Win stake={:.2f}=target/(odds-1); Fixed $50@4.5 -> win $175".format(stake)
+
+
+def chk_settlement():
+    """sync_formking settles WON/LOST/SCRATCHED with correct payout & P&L."""
+    import sqlite3, sync_formking
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE user_bets (bet_id INTEGER PRIMARY KEY AUTOINCREMENT, race_id TEXT, "
+                 "horse_name TEXT, stake REAL, odds_taken REAL, status TEXT DEFAULT 'PENDING', "
+                 "payout REAL DEFAULT 0, net_pnl REAL DEFAULT 0, bsp_settled REAL)")
+    conn.execute("CREATE TABLE race_entries (race_id INTEGER, horse_name TEXT, finish_pos INTEGER, "
+                 "scratched INTEGER DEFAULT 0, result_bsp REAL)")
+    for h, st, od in [("Winner", 10, 4.0), ("Loser", 10, 6.0), ("Scratchy", 10, 3.0)]:
+        conn.execute("INSERT INTO user_bets (race_id,horse_name,stake,odds_taken) VALUES ('1',?,?,?)", (h, st, od))
+    conn.execute("INSERT INTO race_entries VALUES (1,'Winner',1,0,NULL)")
+    conn.execute("INSERT INTO race_entries VALUES (1,'Loser',5,0,NULL)")
+    conn.execute("INSERT INTO race_entries VALUES (1,'Scratchy',NULL,1,NULL)")
+    conn.commit()
+    sync_formking.settle_pending_bets(conn)
+    rows = {r["horse_name"]: r for r in conn.execute("SELECT * FROM user_bets").fetchall()}
+    ok = (rows["Winner"]["status"] == "WON" and abs(rows["Winner"]["net_pnl"] - 30.0) < 1e-6
+          and rows["Loser"]["status"] == "LOST" and abs(rows["Loser"]["net_pnl"] + 10.0) < 1e-6
+          and rows["Scratchy"]["status"] == "SCRATCHED" and abs(rows["Scratchy"]["net_pnl"]) < 1e-6)
+    return ok, "WON +{:.0f}, LOST {:.0f}, SCR {:.0f}".format(
+        rows["Winner"]["net_pnl"], rows["Loser"]["net_pnl"], rows["Scratchy"]["net_pnl"])
+
+
+def chk_ballarat_geometry():
+    """Ballarat <=1100m runs straight ~380m before the bend (not out of stalls)."""
+    g = geometry_for("Ballarat", 1000)
+    ok = abs(g["run_to_turn_m"] - 380.0) < 1e-6 and g["turn_direction"] == "left"
+    return ok, "Ballarat 1000m: {:.0f}m straight before a {} bend".format(
+        g["run_to_turn_m"], g["turn_direction"])
+
+
 def main():
-    print("Rebuilding a clean mock card + settled ledger for the audit...")
+    print("Rebuilding a clean LIVE card + ledger for the audit (needs a Form King key)...")
     with contextlib.redirect_stdout(io.StringIO()):
         ingest.main()
         run_model.main()
@@ -400,6 +480,12 @@ def main():
     check("Syndicate hard cap (+/-2.5 modifiers)", chk_hard_cap)
     check("Form trajectory direction & stability band", chk_trajectory)
     check("Full track geometry (back/bend/home straight)", chk_track_geometry_stages)
+    # --- Live-only conversion & bet logger (MASTER INSTRUCTION) ---
+    check("Strict live-only (no mock fallback)", chk_no_mock_fallback)
+    check("Debutant form suppression (0 starts)", chk_debutant)
+    check("Bet-slip staking math (To-Win / Fixed)", chk_bet_math)
+    check("Live ledger settlement (WON/LOST/SCR)", chk_settlement)
+    check("Ballarat 1000m sprint geometry", chk_ballarat_geometry)
 
     width = 72
     print("=" * width)
