@@ -22,7 +22,8 @@ import intraday_engine as ie
 import weather_engine as we
 import exotics_engine as ex
 from database import get_connection, geometry_for, par_for
-from pricing_engine import renormalize_after_scratching, fair_book_from_scores
+from pricing_engine import (renormalize_after_scratching, fair_book_from_scores,
+                            devig_market_odds, calculate_blended_fair_prices)
 from staking_engine import calculate_stake, calculate_mao, is_void, TARGET_PROFIT
 from rating_engine import calculate_projected_score, classify_trajectory, clamp_modifier
 from prep_engine import profile_runner
@@ -438,6 +439,36 @@ def chk_settlement():
         rows["Winner"]["net_pnl"], rows["Loser"]["net_pnl"], rows["Scratchy"]["net_pnl"])
 
 
+def chk_devig():
+    """De-vigging normalises market probabilities to exactly 1.0; scratched out."""
+    runners = [{"id": 1, "market_odds": 2.0}, {"id": 2, "market_odds": 4.0},
+               {"id": 3, "market_odds": 5.0}, {"id": 4, "market_odds": 8.0, "scratched": True}]
+    p = devig_market_odds(runners)
+    s = sum(p.values())
+    return abs(s - 1.0) < 1e-9 and 4 not in p, "market probs sum to {:.6f}; scratched dropped".format(s)
+
+
+def chk_blend_sums():
+    """A 70/30 market/model blend sums to exactly 1.0 across active runners."""
+    runners = [{"id": i, "score": sc, "market_odds": mo}
+               for i, (sc, mo) in enumerate([(70, 3.0), (60, 5.0), (50, 9.0), (40, 15.0)], 1)]
+    out = calculate_blended_fair_prices(runners, market_weight=0.70)
+    s = sum(v["p_blended"] for v in out.values())
+    return abs(s - 1.0) < 1e-9, "blended book (70/30) sums to {:.6f} across {} runners".format(s, len(out))
+
+
+def chk_shrinkage():
+    """A phantom overlay (model loves it, market doesn't) compresses toward market."""
+    runners = [{"id": 1, "score": 95, "market_odds": 15.0, "effective_odds": 15.0},
+               {"id": 2, "score": 55, "market_odds": 1.5, "effective_odds": 1.5},
+               {"id": 3, "score": 50, "market_odds": 4.0, "effective_odds": 4.0}]
+    pure = calculate_blended_fair_prices(runners, market_weight=0.0)    # pure model
+    blend = calculate_blended_fair_prices(runners, market_weight=0.70)  # 70% market
+    pe, be = pure[1]["edge_pct"], blend[1]["edge_pct"]
+    ok = be < pe and blend[1]["my_price"] > pure[1]["my_price"]
+    return ok, "phantom overlay edge {:+.0f}% -> {:+.0f}% after 70% market anchor".format(pe, be)
+
+
 def chk_ballarat_geometry():
     """Ballarat <=1100m runs straight ~380m before the bend (not out of stalls)."""
     g = geometry_for("Ballarat", 1000)
@@ -486,6 +517,10 @@ def main():
     check("Bet-slip staking math (To-Win / Fixed)", chk_bet_math)
     check("Live ledger settlement (WON/LOST/SCR)", chk_settlement)
     check("Ballarat 1000m sprint geometry", chk_ballarat_geometry)
+    # --- Bayesian market shrinkage (de-vig + blend) ---
+    check("Market de-vig normalises to 1.000", chk_devig)
+    check("70/30 blended book sums to 1.000", chk_blend_sums)
+    check("Phantom overlay shrinks to market", chk_shrinkage)
 
     width = 72
     print("=" * width)

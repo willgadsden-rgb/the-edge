@@ -66,6 +66,66 @@ def fair_book_from_scores(score_by_entry, temperature=TEMPERATURE):
     return {i: p for i, p in zip(ids, probs)}
 
 
+def devig_market_odds(runners):
+    """De-vig the market: normalise market implied probabilities to sum 1.0.
+
+    runners: iterable of dicts with 'id' and 'market_odds' (optional 'scratched').
+    Scratched runners and invalid/zero/<=1 odds are dropped. Returns
+    {id: p_market} where p_raw = 1/price and p_market = p_raw / sum(p_raw), so
+    the bookmaker's overround is removed and the field sums to exactly 1.0.
+    """
+    raw = [(r["id"], 1.0 / r["market_odds"]) for r in runners
+           if not r.get("scratched") and r.get("market_odds") and r["market_odds"] > 1.0]
+    total = sum(p for _, p in raw)
+    if total <= 0:
+        return {}
+    return {i: p / total for i, p in raw}
+
+
+def calculate_blended_fair_prices(runners, market_weight=0.70):
+    """Bayesian market shrinkage: blend the model's book with the de-vigged
+    market so model prices are anchored to live consensus (kills phantom overlays).
+
+    runners: dicts with 'id', 'score' (0-100 projected) and 'market_odds'
+    (optional 'scratched', and 'effective_odds' to also get edge_pct).
+
+        p_model   = softmax(scores)            -> sums to 1
+        p_market  = devig_market_odds(...)      -> sums to 1
+        p_blended = w*p_market + (1-w)*p_model  -> renormalised to 1
+        my_price  = 1 / p_blended
+        edge_pct  = (effective_odds / my_price - 1) * 100
+
+    With no market odds in the field the weight collapses to 0 (pure model).
+    Returns {id: {my_price, p_blended, p_model, p_market, edge_pct?}}.
+    """
+    active = [r for r in runners if not r.get("scratched")]
+    if not active:
+        return {}
+    ids = [r["id"] for r in active]
+    p_model = dict(zip(ids, _softmax([r["score"] for r in active])))
+    p_market = devig_market_odds(active)
+    w = market_weight if p_market else 0.0   # no market -> pure model
+
+    blended = {}
+    for i in ids:
+        pm = p_market.get(i)
+        blended[i] = p_model[i] if pm is None else (w * pm + (1.0 - w) * p_model[i])
+    total = sum(blended.values()) or 1.0
+
+    out = {}
+    for r in active:
+        i = r["id"]
+        pb = blended[i] / total
+        my_price = round(1.0 / pb, 2) if pb > 0 else None
+        res = {"my_price": my_price, "p_blended": pb,
+               "p_model": p_model[i], "p_market": p_market.get(i)}
+        eff = r.get("effective_odds")
+        if eff and my_price:
+            res["edge_pct"] = (eff / my_price - 1.0) * 100.0
+        out[i] = res
+    return out
+
+
 def renormalize_after_scratching(prob_by_entry, scratched_entry_ids):
     """Re-normalise a fair book after scratchings: P_new = P_old / (1 - Sum(scratched)).
 

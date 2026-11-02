@@ -44,7 +44,12 @@ import exotics_engine
 import silks_engine
 import sync_formking
 from database import get_connection, geometry_for, par_for, init_db, ensure_schema
-from pricing_engine import fair_book_from_scores, effective_odds, commission_for_state
+from pricing_engine import (fair_book_from_scores, effective_odds, commission_for_state,
+                            calculate_blended_fair_prices)
+
+# Bayesian market shrinkage: how much to anchor the model book to the live
+# de-vigged market (0 = pure model, 1 = pure market). 0.70 kills phantom overlays.
+DEFAULT_MARKET_WEIGHT = 0.70
 from staking_engine import (calculate_stake, calculate_mao, is_void, TARGET_PROFIT,
                             STAKE_CONSUMER, STAKE_SYNDICATE, DEFAULT_BANKROLL)
 from rating_engine import (calculate_0_to_100_score, generate_trajectory,
@@ -555,9 +560,22 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
             angles_clamped=clamp_modifier(ap + env_pts),
             dls=hist["days_since"], prep_run=e["prep_run_num"])
 
-    active_scores = {e["entry_id"]: computed[e["entry_id"]]["projected"]
-                     for e in entries if e["horse_name"] not in scratched}
-    book = fair_book_from_scores(active_scores) if active_scores else {}
+    # Market-anchored (Bayesian-shrunk) book: blend the model with the de-vigged
+    # live market so prices are grounded in consensus and phantom overlays shrink.
+    market_weight = float(st.session_state.get("market_weight", DEFAULT_MARKET_WEIGHT))
+    blend_runners = []
+    for e in entries:
+        if e["horse_name"] in scratched:
+            continue
+        summ = markets.get(e["entry_id"])
+        live = summ["current"] if summ else e["market_odds"]
+        blend_runners.append({
+            "id": e["entry_id"],
+            "score": computed[e["entry_id"]]["projected"],
+            "market_odds": live,
+            "effective_odds": effective_odds(live, rate) if live else None,
+        })
+    book = calculate_blended_fair_prices(blend_runners, market_weight=market_weight)
 
     rows = []
     for e in entries:
@@ -578,14 +596,14 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
                   "form_delta": c["form_delta"], "cond_delta": c["cond_delta"],
                   "dist_delta": c["dist_delta"], "angles_clamped": c["angles_clamped"],
                   "dls": c["dls"], "prep_run": c["prep_run"]}
-        if is_scr or e["entry_id"] not in book:
+        if is_scr or e["entry_id"] not in book or book[e["entry_id"]]["my_price"] is None:
             rows.append({**common, "disp_fair": None, "market": None, "opening": None,
                          "edge": None, "overlay": False, "value_gone": False, "stake_dollars": 0.0,
                          "mao": None, "fluc_string": None, "sentiment": None,
                          "sentiment_label": None, "scratched": is_scr})
             continue
-        fair = round(1.0 / book[e["entry_id"]], 2)
-        model_prob = book[e["entry_id"]]
+        fair = book[e["entry_id"]]["my_price"]          # market-anchored "my price"
+        model_prob = book[e["entry_id"]]["p_blended"]   # blended prob for Kelly staking
         summ = markets.get(e["entry_id"])
         live = summ["current"] if summ else e["market_odds"]
         opening = summ["opening"] if summ else e["market_odds"]
@@ -1978,6 +1996,10 @@ with st.sidebar:
     st.divider()
     st.caption("⚙️ Staking, commission & surface drift now live in the **Settings** tab. "
                "Live Form King data — strict live-only, no mock fallback.")
+    _mw = float(st.session_state.get("market_weight", DEFAULT_MARKET_WEIGHT))
+    st.markdown('<span class="rec-chip hot">⚡ Active Blend: {:.0f}% Market / {:.0f}% Model</span>'.format(
+        _mw * 100, (1 - _mw) * 100), unsafe_allow_html=True)
+    st.caption("Market anchoring (Bayesian shrinkage) — tune it in **Settings**.")
 
 render_bet_ledger()
 
@@ -2272,6 +2294,16 @@ with tabset:
         st.checkbox("Apply intraday surface drift", value=True, key="apply_intraday",
                     help="Adjust ratings for the day's track pattern (e.g. a gutter favouring "
                          "wider lanes) detected from completed races.")
+    st.markdown("#### ⚡ Market Anchoring (Bayesian Shrinkage)")
+    mw = st.slider("Market Anchor Weight", min_value=0.0, max_value=1.0,
+                   value=DEFAULT_MARKET_WEIGHT, step=0.05, key="market_weight",
+                   help="Blends live market odds with model projections. 0.70 = 70% live market "
+                        "consensus, 30% proprietary model. Eliminates unrealistic phantom overlays.")
+    st.markdown('<span class="rec-chip hot">⚡ Active Blend: {:.0f}% Market / {:.0f}% Model</span>'.format(
+        mw * 100, (1 - mw) * 100), unsafe_allow_html=True)
+    st.caption("Every price is `my_price = 1 / p_blended`, where "
+               "`p_blended = {:.0%}·market + {:.0%}·model`. The market is de-vigged (overround "
+               "removed) before blending, so edges are grounded in live consensus.".format(mw, 1 - mw))
     st.divider()
     # Data source: locally generated mock cards, or the live Form King feed.
     if formking_client.is_live():
