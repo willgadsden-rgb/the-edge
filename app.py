@@ -502,8 +502,18 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
 
     computed = {}
     for e in entries:
-        base = calculate_0_to_100_score(e["wfa_rating"], e["weight"],
-                                        race["distance"], race["class_name"])
+        # Last 5 ACTUAL runs from Form King (barrier trials excluded at ingestion);
+        # feed the real past ratings/positions into the 3-layer rating engine so
+        # the displayed score matches the form shown on the card.
+        try:
+            real_runs = json.loads(e["last5_json"] or "[]")
+        except Exception:
+            real_runs = []
+        base = calculate_0_to_100_score(
+            e["wfa_rating"], e["weight"], race["distance"], race["class_name"],
+            last_ratings=[rr.get("rating") for rr in real_runs],   # newest first
+            barrier=e["barrier"],
+            last_positions=[rr.get("pos") for rr in real_runs])
         prep = profile_runner(e["horse_name"], e["prep_run_num"], base)
         pos = settling.get(e["horse_name"], 99)
         angles = angle_engine.calculate_angles(e, race, meeting, pos, track_bias)
@@ -537,13 +547,8 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
             e["horse_name"], base, e["prep_run_num"], cond, race["distance"],
             situational_points=ap + env_pts, manual_override_points=manual,
             unclamped_points=custom_pts)
-        # Last 5 ACTUAL runs from Form King (barrier trials already excluded in
-        # ingestion). The form pills and trend come from these real runs only;
-        # a debutant (0 starts) has none.
-        try:
-            real_runs = json.loads(e.get("last5_json") or "[]")
-        except Exception:
-            real_runs = []
+        # The form pills and trend come from the real runs parsed above; a
+        # debutant (0 starts) has none.
         is_debut = (e.get("career_starts") == 0)
         # Ratings oldest -> newest for the pills/trend (real_runs is newest first).
         traj = [rr["rating"] for rr in reversed(real_runs) if rr.get("rating") is not None]
