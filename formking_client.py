@@ -235,6 +235,16 @@ def fetch_live_meetings(max_meetings=None):
     if isinstance(upcoming, dict):               # tolerate {"meetings": [...]}
         upcoming = upcoming.get("meetings", [])
 
+    # The upcoming feed can list the same meeting id more than once; dedupe so we
+    # never fetch (and bill) a meeting's summary twice or show it twice.
+    seen, unique = set(), []
+    for m in upcoming:
+        mid = m.get("id")
+        if mid and mid not in seen:
+            seen.add(mid)
+            unique.append(m)
+    upcoming = unique
+
     # TAB meetings first, then by date (soonest first), to spend credits well.
     upcoming.sort(key=lambda m: (not m.get("tabMeeting", False), m.get("date") or 0))
 
