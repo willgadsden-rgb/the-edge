@@ -318,6 +318,23 @@ def fetch_live_meetings(max_meetings=None):
     # Soonest first (TAB meetings ahead of non-TAB at the same time).
     upcoming.sort(key=lambda m: (m.get("date") or 0, not m.get("tabMeeting", False)))
 
+    # The feed also lists one physical meeting under more than one id (e.g. a TAB
+    # and a non-TAB listing of the same card), which the id dedupe above can't
+    # catch. Collapse those on (track_name, date) now that the list is sorted, so
+    # the TAB listing wins and we never fetch (or show) the same card twice.
+    def _track_key(m):
+        name = m.get("trackName") or m.get("venueName") or m.get("name") or ""
+        return (name.strip().lower(), m.get("date") or 0)
+
+    seen_tracks, collapsed = set(), []
+    for m in upcoming:
+        key = _track_key(m)
+        if key[0] and key in seen_tracks:
+            continue
+        seen_tracks.add(key)
+        collapsed.append(m)
+    upcoming = collapsed
+
     # 0 / negative / unset => load every upcoming meeting; else cap for credits.
     selected = upcoming if max_meetings <= 0 else upcoming[:max_meetings]
 
