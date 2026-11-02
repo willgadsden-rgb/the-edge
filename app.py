@@ -22,6 +22,10 @@ from zoneinfo import ZoneInfo
 # All race timing is anchored to the Australian racing clock.
 MELBOURNE = ZoneInfo("Australia/Melbourne")
 
+# Visible build marker so the running commit can be confirmed at a glance (no
+# API credits needed). Bump this string whenever we need to verify a deploy.
+BUILD_TAG = "build-check-01"
+
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -2021,6 +2025,7 @@ with st.sidebar:
     st.markdown('<span class="rec-chip hot">⚡ Active Blend: {:.0f}% Market / {:.0f}% Model</span>'.format(
         _mw * 100, (1 - _mw) * 100), unsafe_allow_html=True)
     st.caption("Market anchoring (Bayesian shrinkage) — tune it in **Settings**.")
+    st.caption("🏗️ {}".format(BUILD_TAG))
 
 render_bet_ledger()
 
