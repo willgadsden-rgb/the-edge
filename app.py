@@ -14,6 +14,7 @@ import contextlib
 import datetime
 import hashlib
 import io
+import json
 import math
 import random
 from zoneinfo import ZoneInfo
@@ -531,15 +532,23 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
             e["horse_name"], base, e["prep_run_num"], cond, race["distance"],
             situational_points=ap + env_pts, manual_override_points=manual,
             unclamped_points=custom_pts)
-        # Debutant (0 career starts): never fabricate a ratings trajectory.
+        # Last 5 ACTUAL runs from Form King (barrier trials already excluded in
+        # ingestion). The form pills and trend come from these real runs only;
+        # a debutant (0 starts) has none.
+        try:
+            real_runs = json.loads(e.get("last5_json") or "[]")
+        except Exception:
+            real_runs = []
         is_debut = (e.get("career_starts") == 0)
-        traj = [] if is_debut else generate_trajectory(e["horse_name"], base, n=5)
+        # Ratings oldest -> newest for the pills/trend (real_runs is newest first).
+        traj = [rr["rating"] for rr in reversed(real_runs) if rr.get("rating") is not None]
         hist = angle_engine.synth_history(e["horse_name"], race["distance"])
         computed[e["entry_id"]] = dict(
             base=base, pos=pos, angles=angles, ap=ap,
             custom_badges=custom_badges, env_badges=env_badges,
             manual=manual, projected=projected, traj=traj, is_debut=is_debut,
-            trend=(0.0 if is_debut else trajectory_trend(traj)), tactical=tac,
+            real_runs=real_runs,
+            trend=(0.0 if (is_debut or not traj) else trajectory_trend(traj)), tactical=tac,
             form_delta=round(prep["prep_adjustment"], 1),
             cond_delta=condition_affinity(e["horse_name"], cond),
             dist_delta=distance_affinity(e["horse_name"], race["distance"]),
@@ -561,6 +570,7 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
                   "manual": c["manual"], "projected": c["projected"],
                   "par": par, "par_delta": round(c["projected"] - par, 1), "cond": cond,
                   "traj": c["traj"], "trend": c["trend"], "is_debut": c["is_debut"],
+                  "real_runs": c["real_runs"],
                   "lane": tac.get("lane"), "lane_name": tac.get("lane_name", "-"),
                   "settle_zone": tac.get("zone", "-"),
                   "tactical_tag": tac.get("tag", "-"), "tactical_blurb": tac.get("tag_blurb", "-"),
@@ -1387,6 +1397,13 @@ def _ord(n):
     return "{}{}".format(n, "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th"))
 
 
+def _ms_date(ms):
+    """Epoch-ms -> short date string (e.g. '12 Jul 26'), or '—' when absent."""
+    if not ms:
+        return "—"
+    return datetime.datetime.utcfromtimestamp(ms / 1000).strftime("%d %b %y")
+
+
 def _last5_runs(name, trajectory, prep_run_num, distance):
     """Deterministic per-run detail for the last 5 starts (newest first): rating,
     finishing position, last-600m split, prep stage at that run, trip and going."""
@@ -1428,19 +1445,24 @@ def _prep_markup(prep_run_num, tag):
             'still building fitness; may need the run.">{} · CONDITIONING</span>'.format(word))
 
 
-def _form_blocks(trajectory, par=None, positions=None):
+def _form_blocks(trajectory, par=None, positions=None, is_debut=False):
     """Render the last-5 form pills NEWEST -> OLDEST (L1 latest, left to right).
 
     Boxes are coloured relative to `par` (the rating needed to win today's class)
     so "green = good enough to win this grade", amber = thereabouts, red = below.
     `positions` (newest-first finishing positions) are shown under each rating.
+    These are ACTUAL runs only — barrier trials are excluded upstream.
     """
-    # Debutant: no past runs. Show a single clean badge, never fabricated pills.
+    # No ratings to show: a debutant gets a clean DEBUT badge; anything else
+    # (data gap) says form is unavailable — never fabricated pills.
     if not trajectory:
+        if is_debut:
+            return ('<div class="chip-grid">'
+                    '<span class="rec-chip hot">🆕 DEBUT</span>'
+                    '<span class="rec-chip"><span class="rv">1st career start · • UNEXPOSED</span></span>'
+                    '</div>')
         return ('<div class="chip-grid">'
-                '<span class="rec-chip hot">🆕 DEBUT</span>'
-                '<span class="rec-chip"><span class="rv">1st career start · • UNEXPOSED</span></span>'
-                '</div>')
+                '<span class="rec-chip"><span class="rv">Recent form unavailable</span></span></div>')
     newest_first = list(reversed(trajectory))          # trajectory stored oldest->newest
     info = classify_trajectory(newest_first)
     labels = ["L1 (Latest)", "L2", "L3", "L4", "L5"]
@@ -1611,7 +1633,7 @@ def _render_career_drawer(r, race):
                         role=role, name=name, sr=sr, roi=roi))
         return '<div class="chip-grid">' + out + "</div>"
 
-    runs = _last5_runs(r["horse_name"], r["traj"], r["prep_run_num"], race["distance"])
+    runs = r.get("real_runs") or []   # last 5 ACTUAL runs (trials excluded)
     with st.expander("📋 DETAILS"):
         t_main, t_runs = st.tabs(["📊 Ratings · connections · adjust", "🏇 Last 5 runs"])
         with t_main:
@@ -1665,20 +1687,20 @@ def _render_career_drawer(r, race):
             if r.get("is_debut") or not runs:
                 st.info("🆕 **Debutant — 1st career start.** No prior race form to show.")
             else:
-                st.caption("The last 5 starts — what the horse rated, where it finished, its last-600m split, "
-                           "and the prep stage at each run (newest first).")
+                st.caption("The last 5 **actual runs** (barrier trials excluded) — date, trip, going, "
+                           "the rating earned and where it finished (newest first).")
                 df5 = pd.DataFrame([{
-                    "Run": "L{}".format(i + 1), "Prep stage": run["stage"], "Trip": "{}m".format(run["dist"]),
-                    "Going": run["going"], "Rated": int(round(run["rating"])), "Finish": _ord(run["pos"]),
-                    "L600m": "{:.2f}s".format(run["last600"]),
+                    "Run": "L{}".format(i + 1), "Date": _ms_date(run.get("date")),
+                    "Trip": "{}m".format(run["dist"]), "Going": run.get("going") or "—",
+                    "Rated": int(round(run["rating"])) if run.get("rating") is not None else None,
+                    "Finish": _ord(run["pos"]),
                 } for i, run in enumerate(runs)])
                 st.dataframe(df5, use_container_width=True, hide_index=True, column_config={
                     "Rated": st.column_config.NumberColumn("Rated", help="The 0-100 rating earned that day."),
                     "Finish": st.column_config.TextColumn("Finish", help="Finishing position that day."),
-                    "L600m": st.column_config.TextColumn("L600m", help="Last-600m sectional split."),
-                    "Prep stage": st.column_config.TextColumn("Prep stage", help="1st up / 2nd up … or Spell (a break)."),
+                    "Date": st.column_config.TextColumn("Date", help="Race date."),
                 })
-                st.caption("ℹ️ The RISING/EASING trend on the card is the slope of these last-5 ratings.")
+                st.caption("ℹ️ The RISING/EASING trend on the card is the slope of these actual-run ratings.")
 
 
 _RFS = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th+"}
@@ -1877,8 +1899,8 @@ def render_runner_card(r, race, cloth):
                 angles=_angle_badges(r["angles"]), cust=_custom_badges(r["custom_badges"]),
                 env=_env_badges(r.get("env_badges", [])),
                 form=_form_blocks(r["traj"], par_for(race["class_name"]),
-                                  [run["pos"] for run in _last5_runs(
-                                      r["horse_name"], r["traj"], r["prep_run_num"], race["distance"])])),
+                                  [run["pos"] for run in (r.get("real_runs") or [])],
+                                  is_debut=r.get("is_debut", False))),
             unsafe_allow_html=True)
 
         if r["value_gone"]:

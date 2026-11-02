@@ -175,7 +175,8 @@ MIGRATIONS = {
                      ("finish_pos", "INTEGER"), ("beaten_lengths", "REAL"),
                      ("official_time", "REAL"), ("result_bsp", "REAL"),
                      ("saddlecloth", "INTEGER"), ("silk_url", "TEXT"), ("silk_svg", "TEXT"),
-                     ("career_starts", "INTEGER")],  # live career start count; 0 = debut
+                     ("career_starts", "INTEGER"),  # live career start count; 0 = debut
+                     ("last5_json", "TEXT")],       # last 5 ACTUAL runs (trials excluded), JSON
     "bets_ledger": [("stake_dollars", "REAL"), ("result", "TEXT")],
 }
 

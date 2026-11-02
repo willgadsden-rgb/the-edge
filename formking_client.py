@@ -179,6 +179,35 @@ def _career_starts(entry):
     return None
 
 
+def _last5(entry):
+    """Up to 5 most-recent ACTUAL race runs for a runner, newest first.
+
+    Barrier trials (trial=True), spells and non-runs (no finish/distance) are
+    excluded — just real race form. Each run: rating (0-100), finishing pos,
+    distance, going and date (epoch ms).
+    """
+    runs = []
+    for ev in (entry.get("pastEvents") or []):
+        if ev.get("trial") or ev.get("spell"):
+            continue
+        pos, dist = ev.get("finishPosition"), ev.get("distance")
+        if not pos or not dist:            # 0 / None = not a completed run
+            continue
+        # 0-100 ability rating for that run; weightForAgeRating is in the summary
+        # feed, the others are fallbacks for the richer race-form feed.
+        rating = next((ev.get(k) for k in ("weightForAgeRating", "exp", "benchmarkRating", "lws")
+                       if isinstance(ev.get(k), (int, float))), None)
+        runs.append({
+            "rating": round(float(rating), 1) if rating is not None else None,
+            "pos":    int(pos),
+            "dist":   int(dist),
+            "going":  ev.get("going"),
+            "date":   ev.get("date"),
+        })
+    runs.sort(key=lambda r: r["date"] or 0, reverse=True)
+    return runs[:5]
+
+
 def _jump_time(race):
     """Race jump time as epoch milliseconds.
 
@@ -217,6 +246,7 @@ def _map_entry(entry):
         "wfa_rating":    entry.get("benchmarkRating"),
         "market_odds":   odds,
         "career_starts": _career_starts(entry),
+        "last5":         _last5(entry),
     }
 
 

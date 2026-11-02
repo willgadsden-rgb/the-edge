@@ -5,6 +5,8 @@ rebuilding the schema each run. There is no mock/synthetic fallback — a feed
 failure raises so the dashboard shows a live error, never fabricated runners.
 """
 
+import json
+
 import formking_client
 from database import get_connection, init_db
 
@@ -59,14 +61,16 @@ def ingest_meeting(data, conn):
 
         for entry in race["entries"]:
             cs = entry.get("career_starts")
+            last5_json = json.dumps(entry.get("last5") or [])
             cur.execute(
                 """
                 INSERT INTO race_entries
-                    (race_id, horse_name, barrier, weight, prep_run_num, wfa_rating, market_odds, career_starts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (race_id, horse_name, barrier, weight, prep_run_num, wfa_rating, market_odds,
+                     career_starts, last5_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (race_id, entry["horse_name"], entry["barrier"], entry["weight"],
-                 entry["prep_run_num"], entry["wfa_rating"], entry["market_odds"], cs),
+                 entry["prep_run_num"], entry["wfa_rating"], entry["market_odds"], cs, last5_json),
             )
             entry_count += 1
 
