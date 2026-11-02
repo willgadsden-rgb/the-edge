@@ -42,7 +42,7 @@ import track_play_engine
 import exotics_engine
 import silks_engine
 import sync_formking
-from database import get_connection, geometry_for, par_for, init_db
+from database import get_connection, geometry_for, par_for, init_db, ensure_schema
 from pricing_engine import fair_book_from_scores, effective_odds, commission_for_state
 from staking_engine import (calculate_stake, calculate_mao, is_void, TARGET_PROFIT,
                             STAKE_CONSUMER, STAKE_SYNDICATE, DEFAULT_BANKROLL)
@@ -1800,8 +1800,19 @@ def render_bet_slip(r, race):
 
 def render_bet_ledger():
     """Sidebar drawer: the syndicate bet ledger — live metrics, table, cancel."""
-    sync_formking.settle_pending_bets()   # settle any bets whose results are in
-    bets = load_user_bets()
+    # Guarantee the user_bets table exists even on a DB that persisted from a
+    # pre-ledger build, then settle anything with live results.
+    conn = get_connection()
+    try:
+        ensure_schema(conn)
+    finally:
+        conn.close()
+    try:
+        sync_formking.settle_pending_bets()
+        bets = load_user_bets()
+    except Exception as exc:
+        st.sidebar.caption("💼 Bet ledger unavailable: {}".format(exc))
+        return
     with st.sidebar.expander("💼 Syndicate Bet Ledger ({})".format(len(bets)), expanded=False):
         mx = ledger_metrics(bets)
         a, b = st.columns(2)

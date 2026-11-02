@@ -10,7 +10,7 @@ text). Winner (finish_pos == 1) -> WON, a scratched runner -> SCRATCHED (stake
 returned), everyone else with a result -> LOST.
 """
 
-from database import get_connection
+from database import get_connection, ensure_schema
 
 
 def settle_pending_bets(conn=None):
@@ -23,6 +23,11 @@ def settle_pending_bets(conn=None):
     conn = conn or get_connection()
     settled = 0
     try:
+        if own:
+            try:
+                ensure_schema(conn)   # tolerate a legacy DB without user_bets
+            except Exception:
+                pass
         pending = conn.execute("SELECT * FROM user_bets WHERE status = 'PENDING'").fetchall()
         for b in pending:
             row = conn.execute(
