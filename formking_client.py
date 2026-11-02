@@ -40,7 +40,7 @@ LAST_FETCH_ERROR = None
 _TIMEOUT = 25                       # per-request network timeout (seconds)
 _UPCOMING_PATH = "/b2c/meetings/upcoming"
 _SUMMARY_PATH = "/b2c/meetings/{meeting_id}"   # full races + runners (5 credits)
-_DEFAULT_MAX_MEETINGS = 4           # keep live refreshes cheap by default
+_DEFAULT_MAX_MEETINGS = 0           # 0 = load every upcoming meeting (no cap)
 _DEFAULT_WEIGHT = 58.0              # fallback carried weight (kg) if absent
 
 
@@ -255,14 +255,20 @@ def _map_meeting(summary):
 def fetch_live_meetings(max_meetings=None):
     """Fetch the live card from Form King and return ingest-shaped meetings.
 
-    Lists upcoming meetings (1 credit), then pulls the full summary (5 credits)
-    for up to max_meetings of them — TAB meetings first, soonest first — so the
-    dashboard shows real weights, odds, prep runs and benchmarks. Raises
-    RuntimeError if config is missing and requests.HTTPError on an API error;
-    ingest.load_meetings() catches those and falls back to mock data.
+    Lists every upcoming meeting (1 credit), then pulls each one's full summary
+    (5 credits each) — soonest first — so the dashboard shows real weights, odds,
+    prep runs and benchmarks for the whole day's (and beyond) card.
+
+    By default ALL upcoming meetings are loaded. FORMKING_MAX_MEETINGS can cap
+    this to save credits: 0 (or unset) means no cap / load everything, any
+    positive number loads at most that many. Raises on a feed error — strict
+    live-only, no mock fallback.
     """
     if max_meetings is None:
-        max_meetings = int(_cfg("FORMKING_MAX_MEETINGS", _DEFAULT_MAX_MEETINGS))
+        try:
+            max_meetings = int(_cfg("FORMKING_MAX_MEETINGS", _DEFAULT_MAX_MEETINGS))
+        except (TypeError, ValueError):
+            max_meetings = _DEFAULT_MAX_MEETINGS
 
     session = _session()
     upcoming = _get(session, _UPCOMING_PATH)
@@ -279,11 +285,14 @@ def fetch_live_meetings(max_meetings=None):
             unique.append(m)
     upcoming = unique
 
-    # TAB meetings first, then by date (soonest first), to spend credits well.
-    upcoming.sort(key=lambda m: (not m.get("tabMeeting", False), m.get("date") or 0))
+    # Soonest first (TAB meetings ahead of non-TAB at the same time).
+    upcoming.sort(key=lambda m: (m.get("date") or 0, not m.get("tabMeeting", False)))
+
+    # 0 / negative / unset => load every upcoming meeting; else cap for credits.
+    selected = upcoming if max_meetings <= 0 else upcoming[:max_meetings]
 
     out = []
-    for m in upcoming[:max_meetings]:
+    for m in selected:
         mid = m.get("id")
         if not mid:
             continue
