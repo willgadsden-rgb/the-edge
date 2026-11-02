@@ -1998,6 +1998,14 @@ with st.sidebar:
         for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
             del st.session_state[k]
         st.rerun()
+    if st.button("🔬 Inspect live feed (~6 cr)", use_container_width=True, key="feed_inspect_btn",
+                 help="One-off: dump the raw Form King field inventory so we can see which fields exist before building on them."):
+        import feed_inspect
+        try:
+            st.session_state["_feed_inv"] = feed_inspect.inspect_live_feed()
+        except Exception as exc:
+            st.session_state["_feed_inv"] = {"error": str(exc)}
+        st.rerun()
     st.divider()
     st.caption("⚙️ Staking, commission & surface drift now live in the **Settings** tab. "
                "Live Form King data — strict live-only, no mock fallback.")
@@ -2007,6 +2015,17 @@ with st.sidebar:
     st.caption("Market anchoring (Bayesian shrinkage) — tune it in **Settings**.")
 
 render_bet_ledger()
+
+# Temporary: live-feed field inventory (triggered by the sidebar button). Shows
+# exactly which fields Form King returns so we can decide what #1-#3 can use.
+if st.session_state.get("_feed_inv"):
+    with st.expander("🔬 Live feed field inventory (diagnostic)", expanded=True):
+        st.caption("Raw Form King field names + types for one upcoming meeting. "
+                   "PROBES flag whether flucs / speedRating / claimWeight / sire / results+BSP exist.")
+        st.json(st.session_state["_feed_inv"])
+        if st.button("Clear inventory", key="clear_feed_inv"):
+            del st.session_state["_feed_inv"]
+            st.rerun()
 
 # --- Meeting selection (home screen) --------------------------------------
 # The Race Cards tab opens as a list of meetings; clicking one sets
