@@ -116,7 +116,7 @@ def _rail(rail_position, rail_metres):
             return "+{:g}m".format(float(rail_metres))
     except (TypeError, ValueError):
         pass
-    return rail_position
+    return rail_position or "True"
 
 
 def _class_name(restrictions, race_name):
@@ -194,7 +194,9 @@ def _map_race(race):
         "race_number":         int(race.get("number") or 0),
         "distance":            int(race.get("distance") or 0),
         "class_name":          _class_name(race.get("restrictions"), race.get("name")),
-        "pace_pressure_index": None,   # not supplied; the model derives tempo from the map
+        # Form King doesn't supply a pace index; use a neutral 1.0 (mock range is
+        # 0.8-1.2). Tempo is derived mainly from the speed map's leader count.
+        "pace_pressure_index": 1.0,
         "entries":             entries,
     }
 
@@ -206,7 +208,7 @@ def _map_meeting(summary):
         "track_name":    summary.get("trackName"),
         "rail_position": _rail(summary.get("railPosition"), summary.get("railMetres")),
         "condition":     _condition(summary.get("going"), summary.get("goingNumber")),
-        "track_variant": None,
+        "track_variant": 0.0,
         "meeting_date":  _date_str(summary.get("date")),
     }
     races = [_map_race(r) for r in summary.get("races", [])]

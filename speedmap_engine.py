@@ -122,6 +122,9 @@ TEMPO_BADGE = {
 
 def classify_tempo(n_leaders, pace_pressure):
     """Classify the projected tempo into one of four tiers."""
+    # Live cards may carry no pace index; treat a missing value as neutral.
+    if pace_pressure is None:
+        pace_pressure = 1.0
     if n_leaders >= 4 or pace_pressure >= 1.15:
         tier = TEMPO_SUICIDAL
     elif n_leaders == 3 or pace_pressure >= 1.05:
