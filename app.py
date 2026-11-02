@@ -2019,16 +2019,26 @@ meeting = sel_meeting if sel_meeting is not None else all_meetings[0]
 races = load_races(meeting["meeting_id"])
 
 
+def _today_melb():
+    """Today's date on the Melbourne clock (not the UTC server clock).
+
+    Streamlit Cloud runs in UTC, which on a race morning is a day behind
+    Melbourne (UTC+11), so a naive date.today() files today's live meetings
+    under 'Tomorrow'. All race-day bucketing is anchored here instead, matching
+    the jump clock (see CLAUDE.md: timing uses Australia/Melbourne)."""
+    return datetime.datetime.now(MELBOURNE).date()
+
+
 def _meeting_status(meeting_date):
     """Return (bucket, label, chip, verb) for a meeting relative to today."""
-    today = datetime.date.today().isoformat()
+    today = _today_melb().isoformat()
     if not meeting_date:
         return ("today", "Racing today", "📡", "Open")
     if meeting_date < today:
         return ("past", "Completed", "🏁", "View results")
     if meeting_date == today:
         return ("today", "Racing today", "📡", "Open")
-    days = (datetime.date.fromisoformat(meeting_date) - datetime.date.today()).days
+    days = (datetime.date.fromisoformat(meeting_date) - _today_melb()).days
     when = "Tomorrow" if days == 1 else "In {} days".format(days)
     return ("future", "Upcoming · " + when, "⏭", "Bet early")
 
@@ -2138,7 +2148,7 @@ def render_meeting_home(meetings):
     if not meetings:
         st.info("No meetings available.")
         return
-    today = datetime.date.today()
+    today = _today_melb()
     today_iso = today.isoformat()
     all_dates = sorted({m["meeting_date"] for m in meetings})
     past = sorted([m for m in meetings if m["meeting_date"] < today_iso],
