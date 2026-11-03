@@ -37,6 +37,12 @@ import requests
 # Settings badge reads it so a failed live pull is diagnosable, not silent.
 LAST_FETCH_ERROR = None
 
+# Meetings whose summary fetch failed on the most recent live pull. Each item is
+# {"id", "track", "error"}. The ingest skips these (never fabricating them) and
+# the app surfaces them as a non-fatal notice, so one meeting's feed error can't
+# black out the whole card. Reset at the start of every fetch_live_meetings().
+SKIPPED_MEETINGS = []
+
 _TIMEOUT = 25                       # per-request network timeout (seconds)
 _UPCOMING_PATH = "/b2c/meetings/upcoming"
 _SUMMARY_PATH = "/b2c/meetings/{meeting_id}"   # full races + runners (5 credits)
@@ -338,13 +344,22 @@ def fetch_live_meetings(max_meetings=None):
     # 0 / negative / unset => load every upcoming meeting; else cap for credits.
     selected = upcoming if max_meetings <= 0 else upcoming[:max_meetings]
 
+    # Reset the skip log for this pull. A single meeting's summary can 500 (a
+    # Form King server error) or time out; skip just that meeting and keep the
+    # rest rather than aborting the whole card. Strict live-only still holds —
+    # nothing is fabricated, the skipped meetings are simply not shown.
+    SKIPPED_MEETINGS.clear()
     out = []
     for m in selected:
         mid = m.get("id")
         if not mid:
             continue
-        summary = _get(session, _SUMMARY_PATH.format(meeting_id=mid))
-        mapped = _map_meeting(summary)
+        try:
+            summary = _get(session, _SUMMARY_PATH.format(meeting_id=mid))
+            mapped = _map_meeting(summary)
+        except Exception as exc:
+            SKIPPED_MEETINGS.append({"id": mid, "track": m.get("trackName"), "error": str(exc)})
+            continue
         if mapped["races"]:
             out.append(mapped)
     return out

@@ -22,7 +22,9 @@ def load_meetings():
     if not meetings:
         raise RuntimeError("Form King returned no meetings for the current window.")
     formking_client.LAST_FETCH_ERROR = None
-    print(f"  data source: Form King (live) — {len(meetings)} meetings")
+    skipped = formking_client.SKIPPED_MEETINGS
+    note = f" ({len(skipped)} skipped: feed error)" if skipped else ""
+    print(f"  data source: Form King (live) — {len(meetings)} meetings{note}")
     return meetings
 
 

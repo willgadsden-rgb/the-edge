@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-check-01"
+BUILD_TAG = "build-check-02 · resilient-ingest"
 
 import pandas as pd
 import streamlit as st
@@ -2028,6 +2028,15 @@ with st.sidebar:
     st.caption("🏗️ {}".format(BUILD_TAG))
 
 render_bet_ledger()
+
+# Non-fatal notice: some meetings' live fetch failed (e.g. a Form King 500) and
+# were skipped. The rest of the card still renders — strict live-only, nothing
+# fabricated — so one bad meeting can't black out the whole dashboard.
+_skipped = getattr(formking_client, "SKIPPED_MEETINGS", [])
+if _skipped:
+    _names = ", ".join((s.get("track") or s.get("id") or "?") for s in _skipped)
+    st.warning("⚠️ {} meeting(s) temporarily unavailable from the live feed and skipped: {}. "
+               "Showing the rest — press 🔄 Rebuild live card to retry them.".format(len(_skipped), _names))
 
 # Temporary: live-feed field inventory (triggered by the sidebar button). Shows
 # exactly which fields Form King returns so we can decide what #1-#3 can use.

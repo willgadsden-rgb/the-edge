@@ -7,10 +7,15 @@
 - Database: SQLite (file: `racing.db`)
 - Mode: **STRICT LIVE-ONLY** (Form King, Victorian Pro tier). All mock/synthetic
   generators and fallbacks are removed — `formking_client.py` is the sole data
-  source and ingestion raises on any feed failure (the dashboard shows
-  `🔴 Live Form King Feed Error`, never fabricated runners). The API key is read
-  from `.streamlit/secrets.toml` / Streamlit Cloud secrets only — never hard-coded
-  or committed. Race timing uses `ZoneInfo('Australia/Melbourne')`.
+  source and **never fabricates runners**. Ingestion is resilient per meeting:
+  if an individual meeting's live fetch fails (e.g. a Form King 500 or timeout)
+  it is **skipped** and recorded in `formking_client.SKIPPED_MEETINGS`, the rest
+  of the card still renders, and the app shows a non-fatal ⚠️ notice listing the
+  skipped meetings. The hard `🔴 Live Form King Feed Error` is shown only when
+  the whole feed is unavailable (the upcoming list fails, or zero meetings load).
+  The API key is read from `.streamlit/secrets.toml` / Streamlit Cloud secrets
+  only — never hard-coded or committed. Race timing uses
+  `ZoneInfo('Australia/Melbourne')`.
 
 ## Core Rules & Schema Standards
 1. Database tables:
