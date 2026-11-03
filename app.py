@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-13 · speedmap-fix"
+BUILD_TAG = "build-14"
 
 import pandas as pd
 import streamlit as st
@@ -2698,14 +2698,12 @@ def render_race_view():
                          track_bias, rule_manager(), env)
     mgr = rule_manager()
 
-    # Diagnostic: how many runners have live in-run data driving the speed map
-    # (settling/pace read from real posSettling/trackSpeed vs the debutant hash).
+    # Data-quality note: how many runners' speed-map positions are read from
+    # real in-run form (settling positions) vs the debutant fallback.
     _nrow = [r for r in rows if not r.get("scratched")]
     _nlive = sum(1 for r in _nrow if r.get("es_live"))
-    _sample = next((r.get("real_runs") for r in _nrow if r.get("real_runs")), None)
-    _keys = sorted(_sample[0].keys()) if _sample else "no last-5 runs"
-    st.caption("📡 In-run data: {}/{} runners have live early-speed. Sample last-5 run keys: {}".format(
-        _nlive, len(_nrow), _keys))
+    st.caption("📡 Speed map: {}/{} runners positioned from real in-run form "
+               "(the rest are first-starters / unexposed).".format(_nlive, len(_nrow)))
 
     main_col, side_col = st.columns([3.7, 1], gap="medium")
     with side_col:
