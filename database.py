@@ -170,7 +170,10 @@ def par_for(class_name):
 # execution (scratchings in Phase 3, bet settlement in the ledger). ensure_schema
 # adds any that are missing so an older racing.db keeps working without a reset.
 MIGRATIONS = {
-    "meetings": [("meeting_date", "TEXT")],
+    "meetings": [("meeting_date", "TEXT"),
+                 # Live surface-moisture readings from Form King (strings, e.g.
+                 # penetrometer "5.12"). Feed the going read and wet-form logic.
+                 ("penetrometer", "TEXT"), ("rainfall", "TEXT"), ("irrigation", "TEXT")],
     "races": [("completed", "INTEGER NOT NULL DEFAULT 0"),
               ("benchmark_par_time", "REAL"), ("actual_win_time", "REAL"), ("tsv", "REAL"),
               ("jump_time", "INTEGER")],  # live jump time, epoch milliseconds
@@ -179,7 +182,13 @@ MIGRATIONS = {
                      ("official_time", "REAL"), ("result_bsp", "REAL"),
                      ("saddlecloth", "INTEGER"), ("silk_url", "TEXT"), ("silk_svg", "TEXT"),
                      ("career_starts", "INTEGER"),  # live career start count; 0 = debut
-                     ("last5_json", "TEXT")],       # last 5 ACTUAL runs (trials excluded), JSON
+                     ("last5_json", "TEXT"),        # last 5 ACTUAL runs (trials excluded), JSON
+                     # Live fields mapped from Form King for the bias/trigger
+                     # engines (steam, apprentice claim, wet sire).
+                     ("apprentice_claim", "REAL"),  # kg claimed by an apprentice (0 = none)
+                     ("sire", "TEXT"),              # for the wet-sire / pedigree read
+                     ("firm_or_drift", "REAL"),     # feed's net market move (- firms, + drifts)
+                     ("flucs_json", "TEXT")],       # price fluctuation series, JSON list
     "bets_ledger": [("stake_dollars", "REAL"), ("result", "TEXT")],
 }
 

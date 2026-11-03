@@ -101,6 +101,22 @@ def _get(session, path, **params):
 
 
 # --- field helpers -----------------------------------------------------------
+def _as_int(val):
+    """int(val) when it's a usable number, else None (tolerates feed nulls/strings)."""
+    try:
+        return int(val) if val is not None and str(val) != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float(val):
+    """float(val) when usable, else None."""
+    try:
+        return float(val) if val is not None and str(val) != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _date_str(epoch_ms):
     """Form King dates are epoch milliseconds -> 'YYYY-MM-DD' (UTC)."""
     if not epoch_ms:
@@ -204,11 +220,20 @@ def _last5(entry):
         rating = next((ev.get(k) for k in ("weightForAgeRating", "exp", "benchmarkRating", "lws")
                        if isinstance(ev.get(k), (int, float))), None)
         runs.append({
-            "rating": round(float(rating), 1) if rating is not None else None,
-            "pos":    int(pos),
-            "dist":   int(dist),
-            "going":  ev.get("going"),
-            "date":   ev.get("date"),
+            "rating":    round(float(rating), 1) if rating is not None else None,
+            "pos":       int(pos),
+            "dist":      int(dist),
+            "going":     ev.get("going"),
+            "date":      ev.get("date"),
+            # Richer per-run detail for the bias / speed-map / settle engines.
+            "settle":    _as_int(ev.get("posSettling")),   # settling position
+            "pos400":    _as_int(ev.get("pos400m")),       # position 400m out
+            "pos800":    _as_int(ev.get("pos800m")),       # position 800m out
+            "track":     ev.get("track"),                  # which track this run was at
+            "bsp":       _as_float(ev.get("bsp")),         # Betfair SP (results channel)
+            "margin":    _as_float(ev.get("margin")),      # beaten/winning margin (L)
+            "sp":        _as_float(ev.get("startingPrice")),
+            "trackspd":  _as_float(ev.get("trackSpeed")),  # speed figure for the run
         })
     runs.sort(key=lambda r: r["date"] or 0, reverse=True)
     return runs[:5]
@@ -244,6 +269,8 @@ def _map_entry(entry):
     if odds is None:
         return None
     prep = entry.get("raceInPrep")
+    o = entry.get("odds") or {}
+    flucs = o.get("flucs")
     return {
         "horse_name":    name,
         "barrier":       int(entry.get("barrier") or 0),
@@ -253,6 +280,11 @@ def _map_entry(entry):
         "market_odds":   odds,
         "career_starts": _career_starts(entry),
         "last5":         _last5(entry),
+        # Live fields for the bias/trigger engines.
+        "apprentice_claim": _as_float(entry.get("apprenticeClaim")) or 0.0,
+        "sire":             horse.get("sire"),
+        "firm_or_drift":    _as_float(o.get("firmOrDrift")),
+        "flucs":            flucs if isinstance(flucs, list) else None,
     }
 
 
@@ -280,6 +312,10 @@ def _map_meeting(summary):
         "condition":     _condition(summary.get("going"), summary.get("goingNumber")),
         "track_variant": 0.0,
         "meeting_date":  _date_str(summary.get("date")),
+        # Live surface-moisture readings (strings in the feed).
+        "penetrometer":  summary.get("penetrometer"),
+        "rainfall":      summary.get("rainfall"),
+        "irrigation":    summary.get("irrigation"),
     }
     races = [_map_race(r) for r in summary.get("races", [])]
     # Drop races with no live runners so the book is never built on an empty field.

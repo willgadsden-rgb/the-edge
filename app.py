@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-check-03"
+BUILD_TAG = "build-04 · enriched-ingest"
 
 import pandas as pd
 import streamlit as st

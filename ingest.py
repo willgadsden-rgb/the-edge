@@ -40,10 +40,13 @@ def ingest_meeting(data, conn):
 
     cur.execute(
         """
-        INSERT INTO meetings (track_id, track_name, rail_position, condition, track_variant, meeting_date)
-        VALUES (:track_id, :track_name, :rail_position, :condition, :track_variant, :meeting_date)
+        INSERT INTO meetings (track_id, track_name, rail_position, condition, track_variant,
+                              meeting_date, penetrometer, rainfall, irrigation)
+        VALUES (:track_id, :track_name, :rail_position, :condition, :track_variant,
+                :meeting_date, :penetrometer, :rainfall, :irrigation)
         """,
-        {**meeting, "meeting_date": meeting.get("meeting_date")},
+        {"penetrometer": None, "rainfall": None, "irrigation": None,
+         **meeting, "meeting_date": meeting.get("meeting_date")},
     )
     meeting_id = cur.lastrowid
 
@@ -64,15 +67,19 @@ def ingest_meeting(data, conn):
         for entry in race["entries"]:
             cs = entry.get("career_starts")
             last5_json = json.dumps(entry.get("last5") or [])
+            flucs = entry.get("flucs")
+            flucs_json = json.dumps(flucs) if isinstance(flucs, list) else None
             cur.execute(
                 """
                 INSERT INTO race_entries
                     (race_id, horse_name, barrier, weight, prep_run_num, wfa_rating, market_odds,
-                     career_starts, last5_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     career_starts, last5_json, apprentice_claim, sire, firm_or_drift, flucs_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (race_id, entry["horse_name"], entry["barrier"], entry["weight"],
-                 entry["prep_run_num"], entry["wfa_rating"], entry["market_odds"], cs, last5_json),
+                 entry["prep_run_num"], entry["wfa_rating"], entry["market_odds"], cs, last5_json,
+                 entry.get("apprentice_claim"), entry.get("sire"),
+                 entry.get("firm_or_drift"), flucs_json),
             )
             entry_count += 1
 
