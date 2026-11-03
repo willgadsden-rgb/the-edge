@@ -2,10 +2,13 @@
 
 Turns barrier + early-speed + track geometry into institutional-grade tactical
 settling: a lateral lane, a running zone, and a tactical risk tag per runner.
-Mock data only (see CLAUDE.md) - early-speed figures are synthesised deterministically.
+Early speed is read live from each runner's real in-run positions (posSettling /
+pos400m) via early_speed_from_runs; the name-hash figure is only a fallback for
+debutants with no in-run history (see CLAUDE.md, strict live-only).
 """
 
 import hashlib
+import json
 
 # Lateral lanes off the inside rail.
 LANE_NAMES = {1: "Rail (Fence)", 2: "One-Off", 3: "3-Wide", 4: "4-Wide"}
@@ -35,10 +38,52 @@ TAG_BLURB = {
 
 
 def early_speed_rating(horse_name):
-    """Deterministic early-speed figure on a 0-10 scale (10 = brilliant beginner)."""
+    """Deterministic early-speed figure on a 0-10 scale (fallback for debutants
+    with no in-run history — see early_speed_from_runs for the live read)."""
     h = int(hashlib.md5(("es:" + horse_name).encode("utf-8")).hexdigest(), 16)
     raw = 30.0 + (h % 651) / 10.0          # 30-95 (legacy internal scale)
     return round((raw - 30.0) / 65.0 * 10.0, 1)
+
+
+# Recency weights for the last-5 in-run positions (newest first).
+_ES_WEIGHTS = (0.40, 0.25, 0.15, 0.12, 0.08)
+
+
+def early_speed_from_runs(last5):
+    """Real early-speed figure (0-10) from a runner's in-run positions.
+
+    Each past run's settled position as a fraction of the field (0 = led, 1 =
+    last) is turned into an early-speed score (led -> ~10, last -> ~0) and
+    recency-weighted. Uses posSettling, falling back to the 400m then 800m
+    position. Returns None when no run carries usable in-run data (e.g. a
+    debutant), so the caller can fall back to the name-hash figure.
+    """
+    vals, weights = [], []
+    for i, r in enumerate(last5 or []):
+        if i >= len(_ES_WEIGHTS):
+            break
+        settle = r.get("settle") or r.get("pos400") or r.get("pos800")
+        nrun = r.get("nrun")
+        if not isinstance(settle, int) or settle < 1 or not isinstance(nrun, int) or nrun < 2:
+            continue
+        frac = min(1.0, (settle - 1) / (nrun - 1))
+        vals.append((1.0 - frac) * 10.0)
+        weights.append(_ES_WEIGHTS[i])
+    if not vals:
+        return None
+    return round(sum(v * w for v, w in zip(vals, weights)) / sum(weights), 1)
+
+
+def _last5_of(entry):
+    """Parse a card entry's last-5 runs, whether stored as JSON or a list."""
+    raw = entry.get("last5_json")
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            return []
+    v = entry.get("last5")
+    return v if isinstance(v, list) else []
 
 
 def _zone(rank, n, is_leader_group):
@@ -232,7 +277,11 @@ def build_tactical_map(entries, geom=None):
     field = [e for e in entries if not e.get("scratched")]
     n = max(1, len(field))
     for e in field:
-        e["_es10"] = early_speed_rating(e["horse_name"])
+        # Real early speed from the runner's in-run positions; the name-hash
+        # figure is only a fallback for debutants with no usable in-run data.
+        es = early_speed_from_runs(_last5_of(e))
+        e["_es10"] = es if es is not None else early_speed_rating(e["horse_name"])
+        e["_es_live"] = es is not None
 
     order = sorted(field, key=lambda e: -e["_es10"])
     rank_by = {e["horse_name"]: i for i, e in enumerate(order, start=1)}
@@ -249,7 +298,8 @@ def build_tactical_map(entries, geom=None):
         lane = _lane(e["barrier"], e["_es10"], zone, is_leader, run_to_turn, n)
         tag = _tag(lane, zone, duel and is_leader)
         result[name] = {
-            "early_speed": e["_es10"], "rank": rank, "is_leader_group": is_leader,
+            "early_speed": e["_es10"], "es_live": e.get("_es_live", False),
+            "rank": rank, "is_leader_group": is_leader,
             "lane": lane, "lane_name": LANE_NAMES[lane], "zone": zone,
             "tag": tag, "tag_blurb": TAG_BLURB[tag],
         }

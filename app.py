@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-08 · prior-n"
+BUILD_TAG = "build-09 · live-speedmap"
 
 import pandas as pd
 import streamlit as st
@@ -664,7 +664,7 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
                   "lane": tac.get("lane"), "lane_name": tac.get("lane_name", "-"),
                   "settle_zone": tac.get("zone", "-"),
                   "tactical_tag": tac.get("tag", "-"), "tactical_blurb": tac.get("tag_blurb", "-"),
-                  "early_speed": tac.get("early_speed"),
+                  "early_speed": tac.get("early_speed"), "es_live": tac.get("es_live", False),
                   "form_delta": c["form_delta"], "cond_delta": c["cond_delta"],
                   "dist_delta": c["dist_delta"], "angles_clamped": c["angles_clamped"],
                   "dls": c["dls"], "prep_run": c["prep_run"]}
@@ -1674,10 +1674,11 @@ def _tactical_line(r):
     elif "Box" in tag:
         cls = "tac-box"
     tt = ("Projected run: where it settles in the field (zone), how far off the inside rail (lane), "
-          "its early-speed figure, and a tactical note.")
-    return ('<div class="tac" title="{tt}">Settle: <b>{zone}</b> &middot; <b>{lane}</b> &middot; ES {es} '
+          "its early-speed figure (📡 = read from the horse's real in-run positions), and a tactical note.")
+    es_mark = "📡" if r.get("es_live") else ""
+    return ('<div class="tac" title="{tt}">Settle: <b>{zone}</b> &middot; <b>{lane}</b> &middot; ES {es}{mark} '
             '&middot; <span class="{cls}">{blurb}</span></div>'.format(
-                tt=tt,
+                tt=tt, mark=es_mark,
                 zone=r.get("settle_zone", "-"), lane=r.get("lane_name", "-"),
                 es=r.get("early_speed"), cls=cls, blurb=r.get("tactical_blurb", "-")))
 
