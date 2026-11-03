@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-05 · native-triggers"
+BUILD_TAG = "build-06 · track-prior"
 
 import pandas as pd
 import streamlit as st
@@ -141,6 +141,7 @@ st.markdown(
       .trig { font-size:.71rem; font-weight:700; padding:3px 9px; border-radius:7px; border:1px solid var(--line); }
       .trig-steam { background:var(--red-soft); color:#ff9a8f; border-color:var(--red-line); }
       .trig-claim { background:var(--surf2); color:var(--txt); }
+      .prior-chip { background:var(--orange-soft); color:var(--orange-2); border-color:var(--orange-line); font-weight:700; }
       .intraday-banner { background:var(--orange-soft); color:var(--orange-2); border:1px solid var(--orange-line);
                          font-weight:700; padding:9px 13px; border-radius:10px; margin:7px 0; font-size:.88rem; }
       .tac { font-size:.77rem; color:var(--dim); margin-top:5px; }
@@ -594,6 +595,12 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
         if _wn:
             env_pts += _wp
             env_badges.append({"name": _wn, "points": _wp})
+        # Pre-race historical prior (#1): small barrier nudge from how this track
+        # plays on today's going. The header chip explains it; fold it in quietly.
+        _bp = track_rail_profiles.barrier_prior_adjustment(e["barrier"], env.get("hist_bias"))
+        if _bp:
+            env_pts += _bp
+            env_badges.append({"name": "Track Prior (barrier)", "points": _bp})
 
         manual = float(st.session_state.get("adj_{}_{}".format(race["race_id"], e["entry_id"]), 0.0) or 0.0)
         # Situational modifiers (angles + bias + tempo + wind + intraday) are hard-capped
@@ -2590,19 +2597,34 @@ def render_race_view():
     wind = env["wind"]
     rail_prof = track_rail_profiles.profile_for(meeting["track_name"], meeting["rail_position"])
 
+    # Pre-race historical prior (#1): how this track plays on today's going, from
+    # the whole card's past runs here. Shared into env so the per-runner barrier
+    # nudge in evaluate_race uses the same read.
+    _conn = get_connection()
+    try:
+        hist_bias = track_rail_profiles.get_historical_track_bias(
+            _conn, meeting["track_name"], meeting["condition"])
+    finally:
+        _conn.close()
+    env["hist_bias"] = hist_bias
+    prior_chip = ("<span class=\"cond-chip prior-chip\" title=\"Historical prior from the card's "
+                  "past runs at this track on today's going (n={n}). IV&gt;1 = that barrier group "
+                  "wins more than its share.\">🏛️ PRE-RACE PRIOR: {txt}</span>").format(
+                      n=hist_bias.get("n", 0), txt=hist_bias["assessment"]) if hist_bias.get("available") else ""
+
     st.markdown(
         '<div class="cond-strip">'
         '<span class="cond-chip">🏟️ {track}</span><span class="cond-chip">📏 {dist} m</span>'
         '<span class="cond-chip">🛤️ Rail: {rail}</span><span class="cond-chip">🌤️ {cond}</span>'
         '<span class="cond-chip cond-par">🎯 Par: {par:.1f}</span>'
         '<span class="cond-chip pace-chip">{tempo}</span>'
-        '<span class="cond-chip wind-chip">🧭 Wind {wfrom} · {wlabel}</span></div>'
+        '<span class="cond-chip wind-chip">🧭 Wind {wfrom} · {wlabel}</span>{prior}</div>'
         '<div class="rc-sub" style="margin-top:-2px">Rail profile: {railnote} · '
         'Commission {comm:.0f}% (net-of-commission pricing)</div>'.format(
             track=meeting["track_name"], dist=race["distance"], rail=meeting["rail_position"],
             cond=meeting["condition"], par=par, tempo=env["tempo_badge"],
             wfrom=wind["from_point"], wlabel=wind["label"], railnote=rail_prof["note"],
-            comm=commission_rate * 100),
+            prior=prior_chip, comm=commission_rate * 100),
         unsafe_allow_html=True)
 
     if env["gutter"]:

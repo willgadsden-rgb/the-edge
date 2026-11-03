@@ -229,6 +229,8 @@ def _last5(entry):
             "settle":    _as_int(ev.get("posSettling")),   # settling position
             "pos400":    _as_int(ev.get("pos400m")),       # position 400m out
             "pos800":    _as_int(ev.get("pos800m")),       # position 800m out
+            "barrier":   _as_int(ev.get("barrier")),       # barrier drawn that run
+            "nrun":      _as_int(ev.get("numRunners")),    # field size that run
             "track":     ev.get("track"),                  # which track this run was at
             "bsp":       _as_float(ev.get("bsp")),         # Betfair SP (results channel)
             "margin":    _as_float(ev.get("margin")),      # beaten/winning margin (L)
