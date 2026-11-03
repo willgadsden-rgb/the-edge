@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-check-02 · resilient-ingest"
+BUILD_TAG = "build-check-03"
 
 import pandas as pd
 import streamlit as st
@@ -2002,22 +2002,6 @@ with st.sidebar:
         for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
             del st.session_state[k]
         st.rerun()
-    if st.button("🔬 Inspect live feed (~6 cr)", use_container_width=True, key="feed_inspect_btn",
-                 help="One-off: dump the raw Form King field inventory so we can see which fields exist before building on them."):
-        import feed_inspect
-        try:
-            st.session_state["_feed_inv"] = feed_inspect.inspect_live_feed()
-        except Exception as exc:
-            st.session_state["_feed_inv"] = {"error": str(exc)}
-        st.rerun()
-    if st.button("🔬 Inspect race results (~16 cr)", use_container_width=True, key="feed_results_btn",
-                 help="One-off: find a race that has already run today and show whether the feed exposes live results (for intraday bias + auto-settle)."):
-        import feed_inspect
-        try:
-            st.session_state["_feed_inv"] = feed_inspect.inspect_results()
-        except Exception as exc:
-            st.session_state["_feed_inv"] = {"error": str(exc)}
-        st.rerun()
     st.divider()
     st.caption("⚙️ Staking, commission & surface drift now live in the **Settings** tab. "
                "Live Form King data — strict live-only, no mock fallback.")
@@ -2034,20 +2018,15 @@ render_bet_ledger()
 # fabricated — so one bad meeting can't black out the whole dashboard.
 _skipped = getattr(formking_client, "SKIPPED_MEETINGS", [])
 if _skipped:
-    _names = ", ".join((s.get("track") or s.get("id") or "?") for s in _skipped)
+    # Dedupe by track so a meeting listed under two ids (both failing) shows once.
+    _seen, _names = set(), []
+    for s in _skipped:
+        nm = s.get("track") or s.get("id") or "?"
+        if nm not in _seen:
+            _seen.add(nm)
+            _names.append(nm)
     st.warning("⚠️ {} meeting(s) temporarily unavailable from the live feed and skipped: {}. "
-               "Showing the rest — press 🔄 Rebuild live card to retry them.".format(len(_skipped), _names))
-
-# Temporary: live-feed field inventory (triggered by the sidebar button). Shows
-# exactly which fields Form King returns so we can decide what #1-#3 can use.
-if st.session_state.get("_feed_inv"):
-    with st.expander("🔬 Live feed field inventory (diagnostic)", expanded=True):
-        st.caption("Raw Form King field names + types for one upcoming meeting. "
-                   "PROBES flag whether flucs / speedRating / claimWeight / sire / results+BSP exist.")
-        st.json(st.session_state["_feed_inv"])
-        if st.button("Clear inventory", key="clear_feed_inv"):
-            del st.session_state["_feed_inv"]
-            st.rerun()
+               "Showing the rest — press 🔄 Rebuild live card to retry them.".format(len(_names), ", ".join(_names)))
 
 # --- Meeting selection (home screen) --------------------------------------
 # The Race Cards tab opens as a list of meetings; clicking one sets
