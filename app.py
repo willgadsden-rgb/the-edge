@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-12 · inrun-keys"
+BUILD_TAG = "build-13 · speedmap-fix"
 
 import pandas as pd
 import streamlit as st

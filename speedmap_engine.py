@@ -63,10 +63,13 @@ def early_speed_from_runs(last5):
         if i >= len(_ES_WEIGHTS):
             break
         settle = r.get("settle") or r.get("pos400") or r.get("pos800")
-        nrun = r.get("nrun")
-        if not isinstance(settle, int) or settle < 1 or not isinstance(nrun, int) or nrun < 2:
+        if not isinstance(settle, int) or settle < 1:
             continue
-        frac = min(1.0, (settle - 1) / (nrun - 1))
+        # Field size normalises the settling position; the feed doesn't always
+        # carry it, so fall back to a typical field of 10 rather than skipping.
+        nrun = r.get("nrun")
+        field = nrun if (isinstance(nrun, int) and nrun >= 2) else 10
+        frac = min(1.0, (settle - 1) / (field - 1))
         vals.append((1.0 - frac) * 10.0)
         weights.append(_ES_WEIGHTS[i])
     if not vals:
