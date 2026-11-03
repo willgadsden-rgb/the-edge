@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-07 · track-prior-safe"
+BUILD_TAG = "build-08 · prior-n"
 
 import pandas as pd
 import streamlit as st
@@ -2618,10 +2618,18 @@ def render_race_view():
         finally:
             _conn.close()
     env["hist_bias"] = hist_bias
-    prior_chip = ("<span class=\"cond-chip prior-chip\" title=\"Historical prior from the card's "
-                  "past runs at this track on today's going (n={n}). IV&gt;1 = that barrier group "
-                  "wins more than its share.\">🏛️ PRE-RACE PRIOR: {txt}</span>").format(
-                      n=hist_bias.get("n", 0), txt=hist_bias["assessment"]) if hist_bias.get("available") else ""
+    _hn = hist_bias.get("n", 0)
+    if hist_bias.get("available"):
+        prior_chip = ("<span class=\"cond-chip prior-chip\" title=\"Historical prior from the card's "
+                      "past runs at this track on today's going (n={n}). IV&gt;1 = that barrier group "
+                      "wins more than its share.\">🏛️ PRE-RACE PRIOR: {txt}</span>").format(
+                          n=_hn, txt=hist_bias["assessment"])
+    else:
+        # Below the sample threshold — show the "gathering" state with the sample
+        # size (also tells us at a glance if the track match is finding runs).
+        prior_chip = ("<span class=\"cond-chip\" title=\"Not enough same-going history at this track "
+                      "yet to call a prior (need {m}).\">🏛️ Track prior: building (n={n})</span>").format(
+                          m=getattr(track_rail_profiles, "MIN_SAMPLE", 20), n=_hn)
 
     st.markdown(
         '<div class="cond-strip">'
