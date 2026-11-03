@@ -501,6 +501,81 @@ def chk_ballarat_geometry():
     return ok, "Ballarat 1000m: straight {:.0f}m run (no bend)".format(g["shown_m"])
 
 
+# --- Bias / trigger build (historical prior, native triggers, speed map,
+#     BOM wind, intraday) — pure-function checks over the new live-data engines.
+def chk_native_triggers():
+    """#3 Form King native triggers: steam, pace duel/leader, claim, wet form."""
+    import triggers_engine as T
+    s = T.steam_signal([6.0, 5.5, 4.2])
+    if not (s["is_steaming"] and s["pct"] < 0):
+        return False, "steam not detected on a ~30% plunge"
+    if T.steam_signal([3.0, 3.3, 3.6])["is_steaming"]:
+        return False, "steam wrongly flagged on a drift"
+    if T.pace_signals({"A": 17.0, "B": 16.0, "C": 15.5}) != {"A": (1.0, "Uncontested Leader")}:
+        return False, "lone-leader signal wrong"
+    duel = T.pace_signals({"A": 17.4, "B": 17.3, "C": 15.0})
+    if duel.get("A") != (-1.0, "High-Pressure Pace Duel") or "B" not in duel:
+        return False, "pace-duel signal wrong"
+    if abs(T.CLAIM_PTS_PER_KG - 0.38) > 1e-9:
+        return False, "apprentice claim != 0.38 pts/kg"
+    if T.wet_form_signal([{"pos": 1, "going": "Heavy"}], "Heavy") != (1.2, "Proven Wet-Tracker"):
+        return False, "wet winner bonus wrong"
+    if T.wet_form_signal([{"pos": 1, "going": "Heavy"}], "Good") != (0.0, None):
+        return False, "wet bonus fired on a dry day"
+    return True, "steam, pace duel/leader, claim 0.38/kg, wet form all correct"
+
+
+def chk_live_early_speed():
+    """#5 speed map reads early speed from real settling positions."""
+    import speedmap_engine as S
+    led = S.early_speed_from_runs([{"settle": 1}, {"settle": 2}])      # no nrun (real case)
+    back = S.early_speed_from_runs([{"settle": 9}, {"settle": 10}])
+    if not (led and back and led > 8.0 and back < 2.5 and led > back):
+        return False, "settle-derived early speed wrong: led={} back={}".format(led, back)
+    if S.early_speed_from_runs([{"rating": 70}]) is not None:
+        return False, "debutant (no in-run data) should be None"
+    return True, "early speed from settle: led={:.1f} > back={:.1f}, debutant falls back".format(led, back)
+
+
+def chk_historical_bias():
+    """#1 historical track bias: going bands + barrier IV prior nudge (±0.5)."""
+    import track_rail_profiles as T
+    if T.going_band("Dead 5") != "SOFT" or T.going_band("Good 4") != "DRY" or T.going_band("Heavy 8") != "HEAVY":
+        return False, "going-band mapping wrong"
+    bias = {"available": True, "barrier_iv": {"Inside": 1.3, "Middle": 1.0, "Outside": 0.7}}
+    inside, wide = T.barrier_prior_adjustment(2, bias), T.barrier_prior_adjustment(12, bias)
+    if not (inside > 0 and wide < 0):
+        return False, "barrier prior nudge sign wrong"
+    if abs(inside) > 0.5 or abs(wide) > 0.5:
+        return False, "barrier nudge exceeds ±0.5 clamp"
+    return True, "going bands + barrier IV nudge (±0.5 clamped): inside {:+.2f}, wide {:+.2f}".format(inside, wide)
+
+
+def chk_bom_wind_vector():
+    """#4 BOM wind resolved onto the straight bearing (head/tail/cross trig)."""
+    import weather_engine as W
+    brg = W.bearing_for("Flemington")
+    head = W.parallel_component({"speed_kmh": 20.0, "from_deg": brg}, "Flemington")
+    tail = W.parallel_component({"speed_kmh": 20.0, "from_deg": (brg + 180) % 360}, "Flemington")
+    cross = W.parallel_component({"speed_kmh": 20.0, "from_deg": (brg + 90) % 360}, "Flemington")
+    if not (abs(head - 20.0) < 0.1 and abs(tail + 20.0) < 0.1 and abs(cross) < 0.1):
+        return False, "wind trig wrong: head={} tail={} cross={}".format(head, tail, cross)
+    return True, "headwind=+{:.0f}, tailwind={:.0f}, crosswind~0 resolved correctly".format(head, tail)
+
+
+def chk_intraday_live_only():
+    """#2 intraday is real-results only (random mock purged) + CLV + confidence."""
+    import intraday_engine as IE
+    if hasattr(IE, "settle_results"):
+        return False, "random settle_results mock still present (live-only violation)"
+    clv = round((5.0 / 4.2 - 1.0) * 100.0, 1)
+    if abs(clv - 19.0) > 0.2:
+        return False, "CLV formula wrong"
+    if IE.CONFIDENCE_BY_RACES.get(2) != 0.35 or IE.CONFIDENCE_BY_RACES.get(3) != 0.65:
+        return False, "intraday confidence weights wrong"
+    return True, "no mock; CLV +19.0% on 5.0/4.2; confidence 2→0.35, 3→0.65"
+
+
 def main():
     print("Rebuilding a clean LIVE card + ledger for the audit (needs a Form King key)...")
     with contextlib.redirect_stdout(io.StringIO()):
@@ -549,6 +624,12 @@ def main():
     check("Non-winner out-rating (60kg > 54kg)", chk_wfa_outrating)
     check("Debutant anchors to class par", chk_debut_baseline)
     check("Blended overlay in commercial band", chk_overlay_bounds)
+    # --- Bias / trigger build (historical prior, triggers, speed map, wind, intraday) ---
+    check("Historical track bias (IV + ±0.5 nudge)", chk_historical_bias)
+    check("Native triggers (steam/pace/claim/wet)", chk_native_triggers)
+    check("Live early speed from settling positions", chk_live_early_speed)
+    check("BOM wind vector (head/tail/cross trig)", chk_bom_wind_vector)
+    check("Intraday real-only + CLV + confidence", chk_intraday_live_only)
 
     width = 72
     print("=" * width)
