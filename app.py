@@ -324,7 +324,7 @@ def rebuild_data():
 def build_env(meeting, race, entries, commission_rate, stake_mode, bankroll, apply_intraday):
     """Assemble the meeting-level environment context for scoring a race."""
     wind = weather_engine.classify_wind(
-        weather_engine.simulate_wind(meeting["track_name"], meeting["meeting_date"]),
+        weather_engine.wind_for(meeting["track_name"], meeting["meeting_date"]),
         meeting["track_name"])
     tier, tier_badge = race_tempo(entries, race)
     gutter = False
@@ -2638,12 +2638,13 @@ def render_race_view():
         '<span class="cond-chip">🛤️ Rail: {rail}</span><span class="cond-chip">🌤️ {cond}</span>'
         '<span class="cond-chip cond-par">🎯 Par: {par:.1f}</span>'
         '<span class="cond-chip pace-chip">{tempo}</span>'
-        '<span class="cond-chip wind-chip">🧭 Wind {wfrom} · {wlabel}</span>{prior}</div>'
+        '<span class="cond-chip wind-chip">🧭 Wind {wfrom} · {wlabel}{wlive}</span>{prior}</div>'
         '<div class="rc-sub" style="margin-top:-2px">Rail profile: {railnote} · '
         'Commission {comm:.0f}% (net-of-commission pricing)</div>'.format(
             track=meeting["track_name"], dist=race["distance"], rail=meeting["rail_position"],
             cond=meeting["condition"], par=par, tempo=env["tempo_badge"],
-            wfrom=wind["from_point"], wlabel=wind["label"], railnote=rail_prof["note"],
+            wfrom=wind["from_point"], wlabel=wind["label"],
+            wlive=" 📡 BOM" if wind.get("live") else "", railnote=rail_prof["note"],
             prior=prior_chip, comm=commission_rate * 100),
         unsafe_allow_html=True)
 

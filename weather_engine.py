@@ -1,14 +1,34 @@
 """Environmental physics & BOM wind vectors for The Edge (Phase 7).
 
 Models how wind down the home straight helps or hurts different running styles.
-Track compass bearings give the direction horses run in the straight; a BOM wind
-vector (speed + direction it blows FROM) is resolved onto that axis. Mock data
-only (see CLAUDE.md) - wind is simulated deterministically per meeting unless
-supplied.
+Track compass bearings give the direction horses run in the straight; a wind
+vector (speed + direction it blows FROM) is resolved onto that axis. The vector
+is read LIVE from the Open-Meteo weather API for the track's coordinates
+(fetch_live_wind); a deterministic simulate_wind remains only as a fallback when
+the live call is unavailable or the track's coordinates are unknown.
 """
 
 import hashlib
 import math
+
+import requests
+
+# Track coordinates (lat, lon) for the live wind lookup.
+TRACK_COORDS = {
+    "Flemington": (-37.787, 144.908), "Caulfield": (-37.882, 145.042),
+    "Moonee Valley": (-37.765, 144.932), "Sandown": (-37.945, 145.164),
+    "Ballarat": (-37.512, 143.836), "Bendigo": (-36.741, 144.300),
+    "Geelong": (-38.168, 144.342), "Pakenham": (-38.067, 145.520),
+    "Randwick": (-33.905, 151.231), "Rosehill": (-33.827, 151.025),
+    "Warwick Farm": (-33.912, 150.943), "Kembla Grange": (-34.482, 150.800),
+    "Eagle Farm": (-27.431, 153.072), "Doomben": (-27.428, 153.065),
+    "Gold Coast": (-28.071, 153.368), "Sunshine Coast": (-26.767, 153.047),
+    "Morphettville": (-34.976, 138.546), "Ascot": (-31.920, 115.922),
+    "Canberra": (-35.319, 149.198),
+}
+
+_WIND_TIMEOUT = 8
+_wind_cache = {}            # track_name -> wind dict (per-process; refreshes on reboot)
 
 # Direction (degrees) the horses run TOWARD down the home/straight.
 TRACK_BEARINGS = {
@@ -39,12 +59,49 @@ def compass_point(deg):
     return _DIRS[int((deg % 360) / 45.0 + 0.5) % 8]
 
 
+def fetch_live_wind(track_name):
+    """Live wind for a track from Open-Meteo: {speed_kmh, from_deg, live:True}.
+
+    Returns None when the track's coordinates are unknown or the call fails, so
+    the caller can fall back to simulate_wind. Cached per process (refreshes on a
+    reboot) so the race views don't re-hit the API on every rerun.
+    """
+    if track_name in _wind_cache:
+        return _wind_cache[track_name]
+    coords = TRACK_COORDS.get(track_name)
+    if not coords:
+        return None
+    try:
+        resp = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={"latitude": coords[0], "longitude": coords[1],
+                    "current": "wind_speed_10m,wind_direction_10m",
+                    "wind_speed_unit": "kmh"},
+            timeout=_WIND_TIMEOUT)
+        resp.raise_for_status()
+        cur = resp.json().get("current") or {}
+        spd, deg = cur.get("wind_speed_10m"), cur.get("wind_direction_10m")
+        if spd is None or deg is None:
+            return None
+        wind = {"speed_kmh": float(spd), "from_deg": float(deg), "live": True}
+        _wind_cache[track_name] = wind
+        return wind
+    except Exception:
+        return None
+
+
+def wind_for(track_name, meeting_date=""):
+    """Live wind if available, else the simulated fallback (marked live=False)."""
+    return fetch_live_wind(track_name) or simulate_wind(track_name, meeting_date)
+
+
 def simulate_wind(track_name, meeting_date=""):
-    """Deterministic mock BOM reading: {speed_kmh, from_deg} for a meeting."""
+    """Deterministic fallback wind reading: {speed_kmh, from_deg} for a meeting,
+    used only when the live Open-Meteo lookup is unavailable."""
     h = int(hashlib.md5(("wind:" + track_name + str(meeting_date)).encode("utf-8")).hexdigest(), 16)
     speed = 6 + (h % 26)                 # 6-31 km/h
     from_deg = (h // 100) % 360
-    return {"speed_kmh": float(speed), "from_deg": float(from_deg)}
+    return {"speed_kmh": float(speed), "from_deg": float(from_deg), "live": False}
 
 
 def parallel_component(wind, track_name):
@@ -68,7 +125,8 @@ def classify_wind(wind, track_name):
         kind, label = "crosswind", "Light/Cross {:.0f} km/h".format(wind["speed_kmh"])
     return {"speed_kmh": wind["speed_kmh"], "from_deg": wind["from_deg"],
             "from_point": compass_point(wind["from_deg"]), "v_parallel": vpar,
-            "kind": kind, "label": label, "bearing": bearing_for(track_name)}
+            "kind": kind, "label": label, "bearing": bearing_for(track_name),
+            "live": wind.get("live", False)}
 
 
 def wind_modifier(summary, runner):
