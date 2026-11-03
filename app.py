@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-09 · live-speedmap"
+BUILD_TAG = "build-10 · wind-intraday"
 
 import pandas as pd
 import streamlit as st
@@ -317,6 +317,14 @@ def rebuild_data():
     try:
         lme.seed_if_empty(conn)
         silks_engine.assign_saddlecloths_and_silks(conn)
+        # Pull any real results that have landed in the feed for races run today
+        # (from pastEvents), then settle pending bets + CLV from them. No-ops when
+        # nothing has run yet — strict live-only, never fabricated.
+        try:
+            sync_formking.ingest_live_results(conn)
+            sync_formking.settle_pending_bets(conn)
+        except Exception:
+            pass
     finally:
         conn.close()
 

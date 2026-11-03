@@ -190,6 +190,7 @@ MIGRATIONS = {
                      ("firm_or_drift", "REAL"),     # feed's net market move (- firms, + drifts)
                      ("flucs_json", "TEXT")],       # price fluctuation series, JSON list
     "bets_ledger": [("stake_dollars", "REAL"), ("result", "TEXT")],
+    "user_bets": [("clv_percent", "REAL")],   # closing-line value vs Betfair SP
 }
 
 
