@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-04 · enriched-ingest"
+BUILD_TAG = "build-05 · native-triggers"
 
 import pandas as pd
 import streamlit as st
@@ -38,6 +38,7 @@ import career_profiles
 import live_market_engine as lme
 import angle_engine
 import copilot
+import triggers_engine
 import speedmap_engine
 import custom_rules
 import intraday_engine
@@ -136,6 +137,10 @@ st.markdown(
              background:var(--surf2); color:var(--dim); border:1px solid var(--line); }
       .ang-pos, .cust, .env-pos { background:var(--orange-soft); color:var(--orange-2); border-color:var(--orange-line); }
       .ang-neg, .cust-neg, .env-neg { background:var(--red-soft); color:#ff9a8f; border-color:var(--red-line); }
+      /* #3 native-trigger chips */
+      .trig { font-size:.71rem; font-weight:700; padding:3px 9px; border-radius:7px; border:1px solid var(--line); }
+      .trig-steam { background:var(--red-soft); color:#ff9a8f; border-color:var(--red-line); }
+      .trig-claim { background:var(--surf2); color:var(--txt); }
       .intraday-banner { background:var(--orange-soft); color:var(--orange-2); border:1px solid var(--orange-line);
                          font-weight:700; padding:9px 13px; border-radius:10px; margin:7px 0; font-size:.88rem; }
       .tac { font-size:.77rem; color:var(--dim); margin-top:5px; }
@@ -483,6 +488,15 @@ def race_markets(race_id):
         conn.close()
 
 
+def _rowget(row, key, default=None):
+    """Read a column from a sqlite3.Row that may predate a migration (returns
+    default instead of raising when the column isn't present)."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
 def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
                   rule_mgr=None, env=None):
     """Full per-runner evaluation: situational angles, tactical settling, custom
@@ -504,17 +518,28 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
     geom = geometry_for(meeting["track_name"], race["distance"])
     tmap = speedmap_engine.build_tactical_map(entries, geom)["runners"]
 
+    # Race-level pace read (#3): each runner's recent speed figure from its last-5
+    # track speeds, then lone-leader / pace-duel signals across the field.
+    def _runs(e):
+        try:
+            return json.loads(e["last5_json"] or "[]")
+        except Exception:
+            return []
+    speed_by_name = {e["horse_name"]: triggers_engine.speed_figure(_runs(e)) for e in entries}
+    pace_sig = triggers_engine.pace_signals(speed_by_name)
+
     computed = {}
     for e in entries:
         # Last 5 ACTUAL runs from Form King (barrier trials excluded at ingestion);
         # feed the real past ratings/positions into the 3-layer rating engine so
         # the displayed score matches the form shown on the card.
-        try:
-            real_runs = json.loads(e["last5_json"] or "[]")
-        except Exception:
-            real_runs = []
+        real_runs = _runs(e)
+        # Apprentice claim (#3): a claim lightens the carried weight, worth
+        # +0.38 pts/kg through the base rating (never clamped as a situational).
+        claim = _rowget(e, "apprentice_claim") or 0.0
+        eff_weight = max(float(e["weight"]) - float(claim), 40.0)
         base = calculate_0_to_100_score(
-            e["wfa_rating"], e["weight"], race["distance"], race["class_name"],
+            e["wfa_rating"], eff_weight, race["distance"], race["class_name"],
             last_ratings=[rr.get("rating") for rr in real_runs],   # newest first
             barrier=e["barrier"],
             last_positions=[rr.get("pos") for rr in real_runs])
@@ -544,6 +569,32 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
             if tb:
                 env_pts += tp; env_badges.append(tb)
 
+        # --- #3 Form King native triggers -------------------------------------
+        triggers = []
+        # Apprentice claim: weight relief is already in `base`; show the chip.
+        _cb = triggers_engine.apprentice_badge(claim)
+        if _cb:
+            triggers.append(_cb)
+        # Late steam plunge from the price flucs (market info, no score change).
+        try:
+            _flucs = json.loads(_rowget(e, "flucs_json") or "null")
+        except Exception:
+            _flucs = None
+        _steam = triggers_engine.steam_signal(_flucs, _rowget(e, "firm_or_drift"))
+        if _steam["is_steaming"]:
+            _pct = "" if _steam["pct"] is None else " ({:+.0f}%)".format(_steam["pct"] * 100)
+            triggers.append({"label": "🚨 SMART MONEY / STEAM{}".format(_pct), "cls": "steam"})
+        # Pace: uncontested leader (+) or pace duel (-), from the race-level read.
+        _pp, _pn = pace_sig.get(e["horse_name"], (0.0, None))
+        if _pn:
+            env_pts += _pp
+            env_badges.append({"name": _pn, "points": _pp})
+        # Proven wet-tracker on a Soft/Heavy day, from the horse's own wet form.
+        _wp, _wn = triggers_engine.wet_form_signal(real_runs, cond)
+        if _wn:
+            env_pts += _wp
+            env_badges.append({"name": _wn, "points": _wp})
+
         manual = float(st.session_state.get("adj_{}_{}".format(race["race_id"], e["entry_id"]), 0.0) or 0.0)
         # Situational modifiers (angles + bias + tempo + wind + intraday) are hard-capped
         # to +/-2.5; deliberate custom-rule biases and the manual override are not.
@@ -559,7 +610,7 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
         hist = angle_engine.synth_history(e["horse_name"], race["distance"])
         computed[e["entry_id"]] = dict(
             base=base, pos=pos, angles=angles, ap=ap,
-            custom_badges=custom_badges, env_badges=env_badges,
+            custom_badges=custom_badges, env_badges=env_badges, triggers=triggers,
             manual=manual, projected=projected, traj=traj, is_debut=is_debut,
             real_runs=real_runs,
             trend=(0.0 if (is_debut or not traj) else trajectory_trend(traj)), tactical=tac,
@@ -593,7 +644,7 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
         tac = c["tactical"]
         common = {**e, "base": c["base"], "settling": c["pos"], "angles": c["angles"],
                   "angle_points": c["ap"], "custom_badges": c["custom_badges"],
-                  "env_badges": c["env_badges"],
+                  "env_badges": c["env_badges"], "triggers": c["triggers"],
                   "manual": c["manual"], "projected": c["projected"],
                   "par": par, "par_delta": round(c["projected"] - par, 1), "cond": cond,
                   "traj": c["traj"], "trend": c["trend"], "is_debut": c["is_debut"],
@@ -1568,6 +1619,27 @@ def _custom_badges(badges):
     return '<div class="ang-row">' + "".join(chips) + "</div>"
 
 
+def _trigger_badges(r):
+    """Render the #3 native-trigger chips (steam plunge, apprentice claim).
+
+    Pace and wet-form carry score points and render via _env_badges; these two
+    are display chips (steam is market info; the claim's points are in the base).
+    """
+    trigs = r.get("triggers") or []
+    if not trigs:
+        return ""
+    tips = {
+        "steam": "Late steam plunge — the price shortened sharply across the last few flucs (smart money).",
+        "claim": "Apprentice's weight claim — lightens the carried weight, worth +0.38 pts/kg in the rating.",
+    }
+    chips = []
+    for t in trigs:
+        cls = t.get("cls", "claim")
+        chips.append('<span class="trig trig-{}" title="{}">{}</span>'.format(
+            cls, tips.get(cls, ""), t.get("label", "")))
+    return '<div class="ang-row">' + "".join(chips) + "</div>"
+
+
 def _env_badges(badges):
     if not badges:
         return ""
@@ -1916,7 +1988,7 @@ def render_runner_card(r, race, cloth):
             '<span class="rc-cloth" title="Saddlecloth number.">{cloth}</span><span class="rc-name">{name}</span>'
             '<div class="rc-sub" title="Barrier drawn, carried weight, the raw 0-100 model rating, and the jockey.">Barrier {bar} · {wt:.1f}kg · Model {score:.1f} · {jky}</div>'
             '<div class="rc-proj {pcls}" title="Projected rating after today\'s adjustments, and how far it sits above (+) or below (-) the par score needed to win this class.">Projected: {proj:.1f} (vs Par: {delta:+.1f})</div>'
-            '{tac}{prep}{angles}{cust}{env}{form}'.format(
+            '{tac}{prep}{angles}{cust}{env}{trig}{form}'.format(
                 cloth=cloth[r["horse_name"]], name=r["horse_name"], bar=r["barrier"],
                 wt=r["weight"], score=r["base"], pcls=proj_cls,
                 silk=silks_engine.silk_data_uri(r["horse_name"]),
@@ -1924,7 +1996,7 @@ def render_runner_card(r, race, cloth):
                 proj=r["projected"], delta=r["par_delta"], tac=_tactical_line(r),
                 prep=_prep_markup(r["prep_run_num"], prep["tag"]),
                 angles=_angle_badges(r["angles"]), cust=_custom_badges(r["custom_badges"]),
-                env=_env_badges(r.get("env_badges", [])),
+                env=_env_badges(r.get("env_badges", [])), trig=_trigger_badges(r),
                 form=_form_blocks(r["traj"], par_for(race["class_name"]),
                                   [run["pos"] for run in (r.get("real_runs") or [])],
                                   is_debut=r.get("is_debut", False))),
