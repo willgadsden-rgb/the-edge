@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-06 · track-prior"
+BUILD_TAG = "build-07 · track-prior-safe"
 
 import pandas as pd
 import streamlit as st
@@ -597,7 +597,12 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
             env_badges.append({"name": _wn, "points": _wp})
         # Pre-race historical prior (#1): small barrier nudge from how this track
         # plays on today's going. The header chip explains it; fold it in quietly.
-        _bp = track_rail_profiles.barrier_prior_adjustment(e["barrier"], env.get("hist_bias"))
+        _bp = 0.0
+        if hasattr(track_rail_profiles, "barrier_prior_adjustment"):
+            try:
+                _bp = track_rail_profiles.barrier_prior_adjustment(e["barrier"], env.get("hist_bias"))
+            except Exception:
+                _bp = 0.0
         if _bp:
             env_pts += _bp
             env_badges.append({"name": "Track Prior (barrier)", "points": _bp})
@@ -2600,12 +2605,18 @@ def render_race_view():
     # Pre-race historical prior (#1): how this track plays on today's going, from
     # the whole card's past runs here. Shared into env so the per-runner barrier
     # nudge in evaluate_race uses the same read.
-    _conn = get_connection()
-    try:
-        hist_bias = track_rail_profiles.get_historical_track_bias(
-            _conn, meeting["track_name"], meeting["condition"])
-    finally:
-        _conn.close()
+    # Defensive: the prior is a non-critical enhancement, so a bad data edge case
+    # (or a stale module during a soft redeploy) must never crash the race view.
+    hist_bias = {"available": False, "n": 0}
+    if hasattr(track_rail_profiles, "get_historical_track_bias"):
+        _conn = get_connection()
+        try:
+            hist_bias = track_rail_profiles.get_historical_track_bias(
+                _conn, meeting["track_name"], meeting["condition"])
+        except Exception:
+            hist_bias = {"available": False, "n": 0}
+        finally:
+            _conn.close()
     env["hist_bias"] = hist_bias
     prior_chip = ("<span class=\"cond-chip prior-chip\" title=\"Historical prior from the card's "
                   "past runs at this track on today's going (n={n}). IV&gt;1 = that barrier group "
