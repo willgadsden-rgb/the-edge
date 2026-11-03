@@ -24,7 +24,7 @@ MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 # Visible build marker so the running commit can be confirmed at a glance (no
 # API credits needed). Bump this string whenever we need to verify a deploy.
-BUILD_TAG = "build-10 · wind-intraday"
+BUILD_TAG = "build-11 · inrun-diag"
 
 import pandas as pd
 import streamlit as st
@@ -2697,6 +2697,13 @@ def render_race_view():
     rows = evaluate_race(entries, scratched_names, race, meeting, race_markets(race_id),
                          track_bias, rule_manager(), env)
     mgr = rule_manager()
+
+    # Diagnostic: how many runners have live in-run data driving the speed map
+    # (settling/pace read from real posSettling/trackSpeed vs the debutant hash).
+    _nrow = [r for r in rows if not r.get("scratched")]
+    _nlive = sum(1 for r in _nrow if r.get("es_live"))
+    st.caption("📡 In-run data: {}/{} runners have live early-speed (posSettling/field size "
+               "from the feed); the rest use the debutant fallback.".format(_nlive, len(_nrow)))
 
     main_col, side_col = st.columns([3.7, 1], gap="medium")
     with side_col:
