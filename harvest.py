@@ -271,6 +271,12 @@ def main(argv=None):
     ap.add_argument("--keep-raw-days", type=int, default=RAW_KEEP_DAYS)
     args = ap.parse_args(argv)
 
+    import os
+    if os.environ.get("GITHUB_ACTIONS") and not os.environ.get("DATABASE_URL"):
+        # On GitHub the SQLite fallback would vanish with the runner: stop before
+        # spending any Form King credits.
+        print("DATABASE_URL secret is not set - nothing harvested, no credits used.", file=sys.stderr)
+        return 2
     db = HistoryDB()
     db.ensure_schema()
     print("History database: {}".format(db.kind))
