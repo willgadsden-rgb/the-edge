@@ -1,12 +1,10 @@
 """Historical track-play synthesis for The Edge.
 
 Given a track, its rail position and the day's wind, describe how the track is
-likely to play (on-pace vs swoopers, inside vs wide draws), with mock historical
-stats. No outbound calls (see CLAUDE.md) - everything is synthesised locally and
-deterministically so the same setup always reads the same way.
+likely to play (on-pace vs swoopers, inside vs wide draws). The rail and wind
+notes are rules of thumb; the history line is counted from the winners on file
+(form_model.track_stats) and says so plainly when there are none.
 """
-
-import hashlib
 
 
 def rail_out_m(rail_position):
@@ -20,7 +18,7 @@ def rail_out_m(rail_position):
         return 0.0
 
 
-def analyze_track_play(track_name, rail_position, wind, distance=None):
+def analyze_track_play(track_name, rail_position, wind, distance=None, history_stats=None):
     """Return a dict describing how the track is likely to play today."""
     out = rail_out_m(rail_position)
 
@@ -60,15 +58,23 @@ def analyze_track_play(track_name, rail_position, wind, distance=None):
     else:
         headline, lean = "Fairly even — no strong bias", "No strong lean"
 
-    # --- mock historical record for this track + rail setting -------------
-    h = int(hashlib.md5("{}|{}".format(track_name, rail_position).encode("utf-8")).hexdigest(), 16)
-    leader_pct = min(74, 42 + (h % 26) + max(0, rail_pace * 4) + max(0, wind_pace * 3))
-    inside_pct = min(72, 40 + (h % 24) + max(0, rail_pace * 4))
-    avg_bar = max(1.0, round(4.2 + (h % 40) / 10.0 + rail_wide, 1))
-    meetings = 8 + (h % 8)
-    history = ("Last {m} meetings off a similar rail here: leaders won {lp}%, inside-half barriers "
-               "won {ip}%, average winning barrier {ab:.1f}.").format(
-                   m=meetings, lp=leader_pct, ip=inside_pct, ab=avg_bar)
+    # --- real history: winners on file at this track ----------------------
+    leader_pct = inside_pct = avg_bar = None
+    hs = (history_stats or {})
+    pick = hs.get("near_trip") if (hs.get("near_trip") or {}).get("races", 0) >= 15 else hs.get("all")
+    if pick:
+        leader_pct, inside_pct, avg_bar = pick["leader_pct"], pick["inside_pct"], pick["avg_barrier"]
+        scope = "within 200m of today's trip" if pick is hs.get("near_trip") else "all distances"
+        parts = []
+        if leader_pct is not None:
+            parts.append("leaders won {}% ({} races)".format(leader_pct, pick["leader_n"]))
+        if inside_pct is not None:
+            parts.append("inside-half barriers won {}% ({} races)".format(inside_pct, pick["inside_n"]))
+        if avg_bar is not None:
+            parts.append("average winning barrier {:.1f}".format(avg_bar))
+        history = "Winners on file here, {} ({} races): {}.".format(scope, pick["races"], "; ".join(parts))
+    else:
+        history = "No winners on file at this track yet - the history database fills this in as cards are harvested."
 
     return {
         "headline": headline, "lean": lean, "rail_note": rail_note, "wind_note": wind_note,
@@ -81,3 +87,5 @@ if __name__ == "__main__":
     w = {"v_parallel": 18.0, "label": "Headwind 18 km/h"}
     print(analyze_track_play("Rosehill", "+6m", w, 1400)["headline"])
     print(analyze_track_play("Flemington", "True", {"v_parallel": 2.0, "label": "calm"}, 1600)["history"])
+    print(analyze_track_play("Flemington", "True", None, 1600, history_stats={"all": {
+        "races": 40, "leader_pct": 22, "leader_n": 38, "inside_pct": 55, "inside_n": 36, "avg_barrier": 6.1}})["history"])

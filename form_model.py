@@ -350,6 +350,36 @@ class FormModel:
         best = g["mean"].idxmax()
         return best if g.loc[best, "mean"] - overall >= margin else None
 
+    def track_stats(self, track, distance=None):
+        """How winners have raced at a track, counted from the winners on file:
+        races, % won by the horse that settled first, % won from the inside half
+        of the draw, and average winning barrier (with a near-trip split)."""
+        if not track:
+            return None
+        w = self.h[(self.h["finish_pos"] == 1) & (self.h["track"].str.lower() == track.lower())]
+        w = w.drop_duplicates("race_id")
+
+        def summary(g):
+            if g.empty:
+                return None
+            settled = g[g["settle_pos"].notna()]
+            drawn = g[g["barrier"].notna() & (g["barrier"] > 0)]
+            halves = drawn[drawn["field_size"].notna() & (drawn["field_size"] >= 4)]
+            return {
+                "races": int(len(g)),
+                "leader_pct": round(100 * (settled["settle_pos"] == 1).mean()) if len(settled) else None,
+                "leader_n": int(len(settled)),
+                "inside_pct": round(100 * (halves["barrier"] <= halves["field_size"] / 2).mean()) if len(halves) else None,
+                "inside_n": int(len(halves)),
+                "avg_barrier": round(float(drawn["barrier"].mean()), 1) if len(drawn) else None,
+            }
+
+        out = {"track": track, "all": summary(w)}
+        if distance:
+            near = w[(w["distance"] - distance).abs() <= 200]
+            out["near_trip"] = summary(near)
+        return out if out["all"] else None
+
     def prep_population(self):
         """Win % and A/E against SP by prep stage across every horse on file.
 

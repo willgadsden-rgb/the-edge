@@ -7,7 +7,7 @@ Tabs:
     3. Suggested Bets & Tracker - qualified suggestions + settled audit ledger
     4. AI Database Assistant    - natural-language -> read-only SQL
 
-Mock data only (see CLAUDE.md). Launch with:  streamlit run app.py
+Live Form King data only. Launch with:  streamlit run app.py
 """
 
 import contextlib
@@ -79,7 +79,8 @@ BIAS_MAP = {
     "Swooper / Outside Advantage": angle_engine.TRACK_BIAS_SWOOPER,
 }
 
-st.set_page_config(page_title="The Edge — Racing Intelligence", page_icon="🏇", layout="wide")
+st.set_page_config(page_title="The Edge — Racing Intelligence", page_icon="🏇", layout="wide",
+                   initial_sidebar_state="expanded")
 
 st.markdown(
     """
@@ -335,9 +336,8 @@ def rebuild_data():
 
 def build_env(meeting, race, entries, commission_rate, stake_mode, bankroll, apply_intraday):
     """Assemble the meeting-level environment context for scoring a race."""
-    wind = weather_engine.classify_wind(
-        weather_engine.wind_for(meeting["track_name"], meeting["meeting_date"]),
-        meeting["track_name"])
+    raw_wind = weather_engine.wind_for(meeting["track_name"], meeting["meeting_date"])
+    wind = weather_engine.classify_wind(raw_wind, meeting["track_name"]) if raw_wind else None
     tier, tier_badge = race_tempo(entries, race)
     gutter = False
     intraday = {"gutter_detected": False}
@@ -917,9 +917,10 @@ def render_guide():
 
     st.markdown("#### 🏇 Campaign stage (fitness)")
     _leg([
-        ('<span class="rc-prep rc-peak">3RD UP 🎯 TARGET PEAK</span>', "Target peak", "At the <b>planned best run</b> of its campaign — expected to be at its fittest."),
-        ('<span class="rc-prep">1ST UP · CONDITIONING</span>', "Conditioning", "Still building fitness — <b>may need the run</b>."),
-        ('<span class="rc-prep rc-taper">5TH+ UP · TAPERING</span>', "Tapering", "Past its peak this campaign — fitness may be fading."),
+        ('<span class="rc-prep">2ND UP</span>', "Prep stage", "Which run this is in the horse's current preparation (from Form King)."),
+        ('<span class="rc-prep rc-peak">3RD UP 🎯 BEST STAGE</span>', "Best stage", "Across its preps on file the horse rates <b>highest at this stage</b> (2+ runs there, 1+ point above its average)."),
+        ('📏 Form: <b>+1.5L</b> vs Maiden par', "Form rating", "The horse's expected run today in <b>lengths</b> against the median winner of this class at this level of track (metro / provincial / country), from the history database. Ceiling = its best relevant run."),
+        ('🐎 Horse Form', "Horse page", "Every run on file for any horse: rating over time, records by prep stage, going, distance, spacing and track, and the stewards' comments."),
     ])
 
     st.markdown("#### 🎯 Angles & adjustments (why we like/dislike a horse)")
@@ -1586,14 +1587,11 @@ def _ms_date(ms):
 
 def _prep_markup(prep_run_num, tag):
     word = _STAGE_WORD[min(int(prep_run_num), 5)]
-    if "PEAK TARGET" in tag:
-        return ('<span class="rc-prep rc-peak" title="Campaign stage: run number this preparation. '
-                'TARGET PEAK = the planned best run, expected to be at its fittest.">{} 🎯 TARGET PEAK</span>'.format(word))
-    if "TAPERING" in tag:
-        return ('<span class="rc-prep rc-taper" title="Campaign stage. TAPERING = past its peak this '
-                'preparation; fitness may be fading.">{} · TAPERING</span>'.format(word))
-    return ('<span class="rc-prep" title="Campaign stage: run number this preparation. CONDITIONING = '
-            'still building fitness; may need the run.">{} · CONDITIONING</span>'.format(word))
+    if "BEST STAGE" in (tag or ""):
+        return ('<span class="rc-prep rc-peak" title="Run number this preparation. BEST STAGE = across '
+                'its preps on file this horse rates highest at this stage (2+ runs, 1+ point above '
+                'its average).">{} 🎯 BEST STAGE</span>'.format(word))
+    return ('<span class="rc-prep" title="Run number this preparation (from Form King).">{}</span>'.format(word))
 
 
 def _form_blocks(trajectory, par=None, positions=None, is_debut=False):
@@ -2130,20 +2128,35 @@ def render_runner_card(r, race, cloth):
 init_db(reset=False)
 ensure_data()
 
+
+def do_rebuild():
+    """Re-fetch the card from Form King and re-price it (one session at a time)."""
+    try:
+        with _rebuild_lock():
+            rebuild_data()
+        for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
+            del st.session_state[k]
+        st.rerun()
+    except Exception as exc:
+        formking_client.LAST_FETCH_ERROR = str(exc)
+        st.error("🔴 Live Form King Feed Error: {}".format(exc))
+
+
+def _card_built_at():
+    """When racing.db was last rebuilt, Melbourne time."""
+    try:
+        from database import DB_PATH as _P
+        ts = datetime.datetime.fromtimestamp(_P.stat().st_mtime, ZoneInfo("Australia/Melbourne"))
+        return ts.strftime("%a %d %b, %I:%M %p").replace(" 0", " ")
+    except Exception:
+        return "-"
+
 with st.sidebar:
     st.markdown("## 🏇 {}".format(BRAND))
     st.caption("{} — live syndicate dashboard (Form King).".format(TAGLINE))
-    if st.button("🔄 Rebuild live card", use_container_width=True,
+    if st.button("🔄 Rebuild live card", use_container_width=True, key="rebuild_side",
                  help="Re-fetch the current card from the live Form King feed and re-price it."):
-        try:
-            with _rebuild_lock():
-                rebuild_data()
-            for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
-                del st.session_state[k]
-            st.rerun()
-        except Exception as exc:
-            formking_client.LAST_FETCH_ERROR = str(exc)
-            st.error("🔴 Live Form King Feed Error: {}".format(exc))
+        do_rebuild()
     if st.button("♻️ Reset scratchings & adjustments", use_container_width=True,
                  help="Clear every scratching you ticked and every manual score override, back to the model defaults."):
         for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
@@ -2445,12 +2458,19 @@ _hdr = meeting["track_name"] if sel_meeting is not None else "Today's Meetings"
 st.markdown('<div class="pie-title">🏇 {brand} — {track}</div><div class="pie-tag">{tag}</div>'.format(
     brand=BRAND, track=_hdr, tag=TAGLINE), unsafe_allow_html=True)
 
+_tb1, _tb2 = st.columns([5, 1.4])
+_tb1.caption("Card built {} (Melbourne) · Victorian meetings · prices and fields update only when "
+             "you rebuild (about 5 Form King credits a meeting).".format(_card_built_at()))
+if _tb2.button("🔄 Rebuild live card", use_container_width=True, key="rebuild_main",
+               help="Re-fetch today's Victorian cards from Form King and re-price every race."):
+    do_rebuild()
+
 tab1, tabh, tab2, tab3, tab4, tabg, tabset = st.tabs([
     "📊 Race Cards & Overlays",
     "🐎 Horse Form",
     "🏇 Realistic Speed Map",
     "🎯 Suggested Bets & Tracker",
-    "🤖 AI Database Assistant",
+    "🔎 Database Search",
     "📖 Guide & Legend",
     "⚙️ Settings",
 ])
@@ -2522,7 +2542,7 @@ def _render_signals_box(rows, race, races, race_id, par, track_bias, mgr):
         else:
             st.caption("No live value overlays in this race right now.")
 
-        with st.expander("🤖 AI Co-Pilot"):
+        with st.expander("🧠 Race notes (rule-based)"):
             st.caption("Local situational analyst over this race's live context. No external API.")
             ctx = copilot.build_context(race, meeting, rows, par, track_bias)
             for i, prompt in enumerate(copilot.SAMPLE_PROMPTS[:3]):
@@ -2699,15 +2719,18 @@ def render_race_view():
         '<div class="cond-strip">'
         '<span class="cond-chip">🏟️ {track}</span><span class="cond-chip">📏 {dist} m</span>'
         '<span class="cond-chip">🛤️ Rail: {rail}</span><span class="cond-chip">🌤️ {cond}</span>'
-        '<span class="cond-chip cond-par">🎯 Par: {par:.1f}</span>'
+        '<span class="cond-chip cond-par" title="Par on the 0-100 score scale the prices use (a fixed table by class). The 📏 Form line on each runner uses the measured par in lengths instead.">🎯 Score par: {par:.1f}</span>'
         '<span class="cond-chip pace-chip">{tempo}</span>'
-        '<span class="cond-chip wind-chip">🧭 Wind {wfrom} · {wlabel}{wlive}</span>{prior}</div>'
+        '{windchip}{prior}</div>'
         '<div class="rc-sub" style="margin-top:-2px">Rail profile: {railnote} · '
         'Commission {comm:.0f}% (net-of-commission pricing)</div>'.format(
             track=meeting["track_name"], dist=race["distance"], rail=meeting["rail_position"],
             cond=meeting["condition"], par=par, tempo=env["tempo_badge"],
-            wfrom=wind["from_point"], wlabel=wind["label"],
-            wlive=" 📡 BOM" if wind.get("live") else "", railnote=rail_prof["note"],
+            windchip=('<span class="cond-chip wind-chip" title="Live wind from Open-Meteo, resolved onto the '
+                      'home straight.">🧭 Wind {} · {} 📡 live</span>'.format(wind["from_point"], wind["label"])
+                      if wind else '<span class="cond-chip" title="Live wind unavailable, so no wind '
+                      'adjustment is applied.">🧭 Wind: no live reading</span>'),
+            railnote=rail_prof["note"],
             prior=prior_chip, comm=commission_rate * 100),
         unsafe_allow_html=True)
 
@@ -2717,8 +2740,10 @@ def render_race_view():
                     unsafe_allow_html=True)
 
     geom_tp = geometry_for(meeting["track_name"], race["distance"])
+    _fmodel = _form_model()
+    _tstats = _fmodel.track_stats(meeting["track_name"], race["distance"]) if _fmodel is not None else None
     play = track_play_engine.analyze_track_play(
-        meeting["track_name"], meeting["rail_position"], wind, race["distance"])
+        meeting["track_name"], meeting["rail_position"], wind, race["distance"], history_stats=_tstats)
     first_turn = ("~{:.0f}m to the first turn".format(geom_tp["run_to_turn_m"])
                   if geom_tp.get("run_to_turn_m") else "straight course — no turn")
     with st.expander("📐 How {} plays today — {} · {}".format(
@@ -2734,8 +2759,8 @@ def render_race_view():
                 lc=lean_cls, hl=play["headline"], lean=play["lean"], rail=play["rail_note"],
                 wind=play["wind_note"], course=geom_tp["label"], hist=play["history"]),
             unsafe_allow_html=True)
-        st.caption("Mock historical read synthesised from the rail position and the day's wind — "
-                   "no external data (see project rules).")
+        st.caption("Rail and wind notes are rules of thumb; the history line is counted from the "
+                   "winners on file at this track (Form King history database).")
 
     hb1, hb2 = st.columns([3, 1])
     with hb1:
@@ -3132,7 +3157,7 @@ with tab4:
                              help="Ask about the data in plain English — it is turned into read-only SQL "
                                   "you can inspect before the results show.")
     if st.button("Run query", type="primary",
-                 help="Translate your question to SQL and run it read-only against the mock database."):
+                 help="Translate your question to SQL and run it read-only against today's card database."):
         try:
             sql = nl_sql.generate_sql(question)
             st.code(sql, language="sql")

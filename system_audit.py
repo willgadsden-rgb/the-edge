@@ -594,7 +594,9 @@ def chk_no_fabrication():
     import pathlib
     offenders = []
     for mod in ("rating_engine", "prep_engine", "angle_engine", "career_profiles",
-                "speedmap_engine", "live_market_engine", "exotics_engine", "ledger_tracker", "app"):
+                "speedmap_engine", "live_market_engine", "exotics_engine", "ledger_tracker", "app",
+                "weather_engine", "track_play_engine", "form_model", "harvest", "history_db",
+                "track_rail_profiles", "triggers_engine", "intraday_engine", "copilot"):
         src = pathlib.Path(__file__).with_name(mod + ".py").read_text()
         if "random." in src or "hashlib.md5" in src:
             offenders.append(mod)

@@ -1,14 +1,13 @@
-"""Environmental physics & BOM wind vectors for The Edge (Phase 7).
+"""Environmental physics & live wind vectors for The Edge (Phase 7).
 
 Models how wind down the home straight helps or hurts different running styles.
 Track compass bearings give the direction horses run in the straight; a wind
 vector (speed + direction it blows FROM) is resolved onto that axis. The vector
 is read LIVE from the Open-Meteo weather API for the track's coordinates
-(fetch_live_wind); a deterministic simulate_wind remains only as a fallback when
-the live call is unavailable or the track's coordinates are unknown.
+(fetch_live_wind). When the call fails or the track's coordinates are unknown there
+is no wind read at all - nothing is made up.
 """
 
-import hashlib
 import math
 
 import requests
@@ -63,7 +62,7 @@ def fetch_live_wind(track_name):
     """Live wind for a track from Open-Meteo: {speed_kmh, from_deg, live:True}.
 
     Returns None when the track's coordinates are unknown or the call fails, so
-    the caller can fall back to simulate_wind. Cached per process (refreshes on a
+    the caller simply skips the wind read. Cached per process (refreshes on a
     reboot) so the race views don't re-hit the API on every rerun.
     """
     if track_name in _wind_cache:
@@ -91,17 +90,9 @@ def fetch_live_wind(track_name):
 
 
 def wind_for(track_name, meeting_date=""):
-    """Live wind if available, else the simulated fallback (marked live=False)."""
-    return fetch_live_wind(track_name) or simulate_wind(track_name, meeting_date)
-
-
-def simulate_wind(track_name, meeting_date=""):
-    """Deterministic fallback wind reading: {speed_kmh, from_deg} for a meeting,
-    used only when the live Open-Meteo lookup is unavailable."""
-    h = int(hashlib.md5(("wind:" + track_name + str(meeting_date)).encode("utf-8")).hexdigest(), 16)
-    speed = 6 + (h % 26)                 # 6-31 km/h
-    from_deg = (h // 100) % 360
-    return {"speed_kmh": float(speed), "from_deg": float(from_deg), "live": False}
+    """Live wind from Open-Meteo, or None when it can't be fetched. There is no
+    made-up fallback: no live wind means no wind adjustment."""
+    return fetch_live_wind(track_name)
 
 
 def parallel_component(wind, track_name):
@@ -154,7 +145,7 @@ def wind_modifier(summary, runner):
 
 
 if __name__ == "__main__":
-    w = simulate_wind("Flemington", "2026-10-26")
+    w = {"speed_kmh": 20.0, "from_deg": 180.0, "live": False}   # fixed test vector
     s = classify_wind(w, "Flemington")
     print(w, s)
     print(wind_modifier(s, {"settle_zone": "Leader", "tactical_tag": "Clear Run", "lane": 1}))
