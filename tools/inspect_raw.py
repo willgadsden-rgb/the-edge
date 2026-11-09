@@ -8,6 +8,14 @@ ref = sys.argv[1] if len(sys.argv) > 1 else None
 db = HistoryDB()
 rows = db.query("SELECT endpoint, ref, pulled_at, body_zlib FROM raw_payloads WHERE ref LIKE ? ORDER BY pulled_at DESC LIMIT 3",
                 ("%" + (ref or "") + "%",))
+if len(sys.argv) > 2 and sys.argv[2] == "results":
+    endpoint, r, pulled, body = rows[0]
+    card = json.loads(zlib.decompress(bytes(body)))
+    race = card["races"][0]
+    print("officialTiming:", json.dumps(race.get("officialTiming"))[:400])
+    for e in race["entries"]:
+        print(e["horse"]["name"] if isinstance(e.get("horse"), dict) else e.get("horse"), "scr", e.get("scratched"), json.dumps(e.get("horseResult")))
+    sys.exit(0)
 for endpoint, r, pulled, body in rows:
     card = json.loads(zlib.decompress(bytes(body)))
     print("==", endpoint, r, pulled)
