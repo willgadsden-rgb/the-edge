@@ -1,0 +1,23 @@
+# Print the form model's calibration and today's ratings from the full history.
+name: Model report
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/**"]
+    paths: ["form_model.py", "model_report.py", ".github/workflows/model-report.yml"]
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Model report
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python model_report.py
