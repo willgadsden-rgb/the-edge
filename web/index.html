@@ -30,6 +30,17 @@
     tr.runner-row:hover { background: rgba(255,255,255,.025); }
     tr.scratched td { opacity: .35; text-decoration: line-through; }
     .tip { border-bottom: 1px dotted #4b5563; cursor: help; }
+    .map-track { background: repeating-linear-gradient(90deg, rgba(16,185,129,.035) 0 60px, rgba(16,185,129,.06) 60px 120px), #0b1310; }
+    .map-lane { border-top: 1px dashed rgba(255,255,255,.06); }
+    .map-rail { height: 4px; background: linear-gradient(90deg, #d1d5db, #f9fafb); box-shadow: 0 0 8px rgba(255,255,255,.25); }
+    .map-horse { position:absolute; transform: translate(-50%, -50%); display:flex; flex-direction:column; align-items:center; cursor:pointer; transition: transform .15s; z-index: 2; }
+    .map-horse:hover { transform: translate(-50%, -50%) scale(1.12); z-index: 5; }
+    .map-dot { width: 30px; height: 30px; border-radius: 9999px; display:flex; align-items:center; justify-content:center; font-family:'JetBrains Mono',monospace; font-weight:800; font-size:12px; background:#1e2638; color:#e6edf3; border: 2px solid #374151; position:relative; }
+    .map-dot.top { background:#ff6600; color:#000; border-color:#ffa366; box-shadow: 0 0 12px rgba(255,102,0,.45); }
+    .map-dot.value { border-color:#10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.35); }
+    .map-dot.fav { background:#2a3348; border-color:#9ca3af; }
+    .map-name { font-size: 9px; color:#9ca3af; margin-top:2px; white-space:nowrap; max-width: 70px; overflow:hidden; text-overflow:ellipsis; }
+    .map-flag { position:absolute; top:-7px; right:-9px; font-size:8px; font-weight:800; padding:0 3px; border-radius:4px; line-height:12px; }
   </style>
 </head>
 <body class="flex h-screen overflow-hidden">
@@ -91,6 +102,18 @@
         <!-- ONE RACE -->
         <div id="individual-race-views" class="hidden space-y-4">
           <div id="raceHeader" class="flex flex-wrap items-center gap-2"></div>
+          <!-- SPEED MAP -->
+          <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl">
+            <div class="p-4 border-b border-[#1e2638] flex flex-wrap gap-2 justify-between items-center bg-[#0d1117]">
+              <h2 class="text-white font-black text-lg">Speed Map</h2>
+              <div id="mapChips" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="overflow-x-auto">
+              <div id="speedMap" class="relative" style="min-width:680px"></div>
+            </div>
+            <div class="md:hidden px-4 pt-2 text-[10px] text-gray-500">Swipe the map sideways to see the leaders →</div>
+            <div id="mapRead" class="px-4 pb-4 pt-1 text-xs text-gray-300 space-y-1"></div>
+          </div>
           <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl">
             <div class="p-4 border-b border-[#1e2638] flex flex-wrap gap-2 justify-between items-center bg-[#0d1117]">
               <h2 class="text-white font-black text-lg">Odds Matrix</h2>
@@ -157,6 +180,7 @@
           <p><b class="text-white">Conf</b> — High = at least three effective recent runs and two on today's going and trip. Low = treat the rating as a guess.</p>
           <p><b class="text-white">Prep</b> — run number this preparation from Form King. ★ means its record is best at today's stage (2+ runs there, 1+ point above its average).</p>
           <p><b class="text-white">Map</b> — expected settling position from its real in-run positions (1 = leader). Debutants sit mid-field until they have form.</p>
+          <p><b class="text-white">Speed Map</b> — every runner placed where it should settle: front of the field on the right (heading to the post), fence at the top. Tags: <b>3W</b> caught three-wide with no cover, <b>P</b> pocketed on the fence, <b>BS</b> box seat behind the leader, <b>D</b> in a speed duel. Orange is the top of our book, a green ring is a value flag. Tempo comes from how many genuine speed horses are in the race.</p>
           <p><b class="text-white">Model / True Odds</b> — the model's win chance, then blended with the de-vigged market (70% market, 30% model) into a 100% book. True Odds = 1 ÷ that chance.</p>
           <p><b class="text-white">Edge / Min / Bet</b> — edge is the live price (after 8% commission) against True Odds. Min = True Odds + 15%. A ✅ needs edge 20%+, the price at or above Min, and odds between $2.20 and $18.</p>
           <p class="text-gray-500 text-xs">Prices only change when you press Refresh prices (5 Form King credits a meeting) or turn on Auto prices. Scores change when the engine runs: about 9am and 11:30pm daily, or when you press Sync.</p>
@@ -363,6 +387,7 @@
       chip(`🎯 Par ${num(race.form_par)}`, 'Median winning rating for this class at this level of track') +
       chip(`🌤️ ${esc(m.going || '')}`) + chip(`🛤️ ${esc(m.rail || '')}`) +
       chip(`⚡ ${esc((race.tempo || '').toLowerCase())} tempo · ${race.leaders ?? 0} leaders`, 'From the real early speed of the field');
+    renderSpeedMap(race);
 
     document.getElementById('runnersTableBody').innerHTML = rows.map(r => {
       const open = S.expanded === race.race_id + '|' + r.horse_name;
@@ -391,6 +416,120 @@
         </tr>
         ${open ? `<tr><td colspan="14" class="p-4 bg-[#0d1117]">${detailPanel(r)}</td></tr>` : ''}`;
     }).join('') || '<tr><td colspan="14" class="p-10 text-center text-gray-500">No runners.</td></tr>';
+  }
+
+  let _mapResize = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_mapResize);
+    _mapResize = setTimeout(() => { if (S.view !== 'ALL') { const r = S.races.find(x => x.race_id === S.view); if (r) renderSpeedMap(r); } }, 200);
+  });
+
+  // ---------- speed map ----------
+  const LANES = ['Rail (Fence)', 'One-Off', '3-Wide', '4-Wide'];
+  const LANE_LABEL = ['Fence', '1 off', '3 wide', '4 wide'];
+  const TAG_FLAG = {
+    '3WNC': { t: '3W', cls: 'bg-amber-500 text-black', why: '3-wide no cover: paying an energy tax' },
+    'Pocketed': { t: 'P', cls: 'bg-red-500 text-white', why: 'Pocketed on the fence: needs luck for a run' },
+    'Box Seat': { t: 'BS', cls: 'bg-emerald-500 text-black', why: 'Box seat: dream run behind the leader' },
+    'Contested Duel': { t: 'D', cls: 'bg-red-700 text-white', why: 'In a contested speed duel' },
+  };
+  const shortName = n => { const s = String(n || ''); return s.length > 11 ? s.slice(0, 10) + '…' : s; };
+  const listNames = xs => xs.map(r => `<b class="text-white">${esc(r.horse_name)}</b> (${r.saddlecloth ?? '–'})`).join(', ');
+
+  function renderSpeedMap(race) {
+    const box = document.getElementById('speedMap');
+    const rows = (S.runners[race.race_id] || []).filter(r => !r._scratched && r.settle_rank);
+    const tempo = (race.tempo || '').toUpperCase();
+    const tempoTone = { SUICIDAL: 'sect-red', FAST: 'sect-yellow', GENUINE: 'sect-green', SLOW: 'sect-green' }[tempo] || '';
+    document.getElementById('mapChips').innerHTML =
+      `<span class="pill ${tempoTone} text-[11px] py-1">${esc(tempo.toLowerCase() || '–')} tempo</span>` +
+      `<span class="pill bg-[#11151d] border border-[#1e2638] text-gray-300 text-[11px] py-1">${race.leaders ? race.leaders + ' in the speed group' : 'no natural leader'}</span>`;
+    if (!rows.length) {
+      box.innerHTML = '<div class="p-8 text-center text-gray-500 text-sm">No map for this race yet.</div>';
+      document.getElementById('mapRead').innerHTML = '';
+      return;
+    }
+    // Re-rank the runners still in the race so scratchings close the gaps.
+    rows.sort((a, b) => a.settle_rank - b.settle_rank);
+    const n = rows.length;
+    const book = byBook(rows);
+    const topName = book[0] && book[0].horse_name;
+    const favName = rows.filter(r => r._market).sort((a, b) => a._market - b._market)[0]?.horse_name;
+
+    const W = Math.max(680, box.parentElement.clientWidth || 680);
+    const padL = 88, padR = 60, laneH = 64, railH = 4, topH = 22, zoneH = 24;
+    const H = topH + railH + laneH * LANES.length + zoneH;
+    const xOf = i => padL + (n === 1 ? (W - padL - padR) : (n - 1 - i) / (n - 1) * (W - padL - padR));
+    const laneOf = r => { const k = LANES.indexOf(r.map_lane); return k < 0 ? 1 : k; };
+    const yOf = k => topH + railH + laneH * k + laneH / 2;
+
+    let html = `<div class="map-track" style="width:${W}px;height:${H}px;position:relative">`;
+    html += `<div class="absolute text-[10px] font-bold text-gray-500 uppercase tracking-widest" style="left:${padL}px;top:4px">Back of the field</div>`;
+    html += `<div class="absolute text-[10px] font-bold text-[#ff6600] uppercase tracking-widest" style="right:12px;top:4px">Winning post →</div>`;
+    html += `<div class="map-rail absolute" style="left:0;right:0;top:${topH}px"></div>`;
+    LANES.forEach((_, k) => {
+      const top = topH + railH + laneH * k;
+      html += `<div class="${k ? 'map-lane' : ''} absolute" style="left:0;right:0;top:${top}px;height:${laneH}px"></div>`;
+      html += `<div class="absolute text-[10px] font-bold text-gray-500 uppercase" style="left:10px;top:${top + laneH / 2 - 7}px">${LANE_LABEL[k]}</div>`;
+    });
+
+    // Names go under the dot unless the last runner in that lane is too close; then over it.
+    const lastInLane = {};
+    rows.forEach((r, i) => {
+      const k = laneOf(r), x = xOf(i), y = yOf(k);
+      const prev = lastInLane[k];
+      const above = prev && Math.abs(prev.x - x) < 64 && !prev.above;
+      lastInLane[k] = { x, above };
+      const cls = ['map-dot', r.horse_name === topName ? 'top' : '', r.horse_name === favName && r.horse_name !== topName ? 'fav' : '', r._value ? 'value' : ''].join(' ');
+      const flag = TAG_FLAG[r.map_tag];
+      const tip = `${r.horse_name} · barrier ${r.barrier ?? '–'} · ${r.map_zone || ''} · ${r.map_lane || ''}` +
+                  `${flag ? ' · ' + flag.why : ''} · early speed ${num(r.early_speed, 1)}/10 · true ${money(r._fair)} · live ${money(r._market)}`;
+      const name = `<div class="map-name">${esc(shortName(r.horse_name))}</div>`;
+      html += `<div class="map-horse" style="left:${x}px;top:${y + (above ? -8 : 8)}px" title="${esc(tip)}"
+                    onclick="toggleRow('${race.race_id}', ${JSON.stringify(r.horse_name).replace(/"/g, '&quot;')});document.getElementById('runnersTableBody').scrollIntoView({behavior:'smooth',block:'start'})">
+                 ${above ? name : ''}
+                 <div class="${cls}">${r.saddlecloth ?? '?'}${flag ? `<span class="map-flag ${flag.cls}">${flag.t}</span>` : ''}</div>
+                 ${above ? '' : name}
+               </div>`;
+    });
+
+    // Zone labels along the bottom, centred under the runners in each zone.
+    const zones = {};
+    rows.forEach((r, i) => { const z = zoneShort(r.map_zone) || '–'; (zones[z] = zones[z] || []).push(xOf(i)); });
+    Object.entries(zones).forEach(([z, xs]) => {
+      const x = xs.reduce((a, b) => a + b, 0) / xs.length;
+      html += `<div class="absolute text-[10px] font-bold text-gray-400 uppercase tracking-wide" style="left:${x}px;bottom:5px;transform:translateX(-50%);white-space:nowrap">${esc(z)}</div>`;
+    });
+    html += `</div>`;
+    box.innerHTML = html;
+
+    // A plain-English read of the map, from the same fields.
+    const lines = [];
+    const lead = rows[0];
+    const speed = rows.filter(r => r.map_tag === 'Contested Duel');
+    lines.push(`<span class="text-[#ff6600] font-bold">Lead:</span> ${listNames([lead])} from barrier ${lead.barrier ?? '–'}` +
+      `${lead.map_lane === 'Rail (Fence)' ? ', on the fence' : lead.map_lane ? ', ' + esc(lead.map_lane.toLowerCase()) : ''}` +
+      `${speed.length > 1 ? ` — but ${speed.length - 1} others want it too, so expect a duel` : ''}.`);
+    const box1 = rows.filter(r => r.map_tag === 'Box Seat');
+    if (box1.length) lines.push(`<span class="text-emerald-400 font-bold">Dream run:</span> ${listNames(box1)}.`);
+    const wide = rows.filter(r => r.map_tag === '3WNC');
+    if (wide.length) lines.push(`<span class="text-amber-300 font-bold">Caught wide, no cover:</span> ${listNames(wide)}.`);
+    const pock = rows.filter(r => r.map_tag === 'Pocketed');
+    if (pock.length) lines.push(`<span class="text-red-400 font-bold">Needs luck on the fence:</span> ${listNames(pock)}.`);
+    if (tempo === 'SUICIDAL' || tempo === 'FAST') {
+      const back = rows.filter(r => r.map_zone === 'Backmarker' || r.map_zone === 'Worse Than Midfield');
+      if (back.length) lines.push(`<span class="text-sky-300 font-bold">Pace up front helps the ones coming from back:</span> ${listNames(back)}.`);
+    } else if (tempo === 'SLOW') {
+      const on = rows.filter(r => r.map_zone === 'Leader' || r.map_zone === "Leader's Back / Box Seat");
+      if (on.length) lines.push(`<span class="text-sky-300 font-bold">Slow pace suits those on speed:</span> ${listNames(on)}.`);
+    }
+    if (topName) {
+      const t = rows.find(r => r.horse_name === topName);
+      lines.push(`<span class="text-[#ffa366] font-bold">Our top pick</span> ${listNames([t])} maps ${esc((zoneShort(t.map_zone) || '–').toLowerCase())}` +
+        `${t.map_lane ? ', ' + esc(t.map_lane.toLowerCase()) : ''}${TAG_FLAG[t.map_tag] ? ' — ' + esc(TAG_FLAG[t.map_tag].why.toLowerCase()) : ''}.`);
+    }
+    lines.push(`<span class="text-gray-500">Orange = top of our book · grey ring = market favourite · green ring = value flag · 3W wide no cover · P pocketed · BS box seat · D speed duel. Positions come from each horse's real settling positions; debutants sit mid-field. Click a horse to open its form.</span>`);
+    document.getElementById('mapRead').innerHTML = lines.map(l => `<div>${l}</div>`).join('');
   }
 
   function detailPanel(r) {
