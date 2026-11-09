@@ -4,8 +4,8 @@ A Streamlit dashboard that rates every runner on an absolute 0–100 scale, pric
 the field to a 100% fair book, flags value overlays, animates a tactical speed map
 on each track's real shape, and reads how the track plays by rail and wind.
 
-**Mock data only** — no real odds, bets, or outbound API calls. For research and
-education; not financial advice.
+Runs on the live Form King feed only: every number on the card comes from Form King
+(nothing is generated from a horse's name). For research; not financial advice.
 
 ## Run locally
 
@@ -41,6 +41,28 @@ rating model, pricing, staking and ledger all run unchanged off `racing.db`.
 so a refresh costs `1 + 5 × FORMKING_MAX_MEETINGS`. If a live fetch fails (no key,
 network, API error) the app logs why and falls back to mock, so it never breaks.
 
+## History database (v2)
+
+`harvest.py` grows a history of every race run it can see. Each meeting card
+(5 credits) carries every runner's last 12 runs, so one card adds ~1,000 runs.
+
+- **Where it lives:** Supabase project **VIC FORM**, schema `edge` (the Syndicate OS
+  tables in `public` are untouched). It was seeded with the 36,083 past runs the
+  Syndicate OS app had already collected (Jan 2020 to Nov 2026).
+- **Connect:** set `DATABASE_URL` (Supabase → Connect → Session pooler string) in
+  `.streamlit/secrets.toml` or the environment. Without it the harvester writes to a
+  local `history.db` (SQLite) instead.
+- **Run it:** `python harvest.py` (today's meetings), `--date 2026-11-12`,
+  `--file card.json` (no credits), `--dry-run` (list meetings and cost).
+- **Automatic:** `.github/workflows/harvest.yml` runs it at ~9am and ~11pm Melbourne
+  every day. Add repository secrets `FORMKING_API_KEY`, `FORMKING_BASE_URL` and
+  `DATABASE_URL` for it to work.
+
+Tables: `meetings`, `races`, `runs` (one row per horse per race, incl. prep stage,
+stewards' comment, SP/BSP, settle/800/400 positions), `horses`, `entries` (today's
+runners), `odds_snapshots` (price at every pull), `raw_payloads` (compressed cards,
+kept 30 days).
+
 ## Deploy for free (so friends can view it)
 
 This is a **Python/Streamlit server app**, so it needs a host that runs Python —
@@ -60,4 +82,6 @@ This is a **Python/Streamlit server app**, so it needs a host that runs Python �
 - `speedmap_engine.py`, `database.py` — tactical settling + per-track geometry.
 - `track_play_engine.py`, `weather_engine.py`, `track_rail_profiles.py` — how the track plays.
 - `career_profiles.py`, `angle_engine.py`, `prep_engine.py`, `custom_rules.py`, `copilot.py` — form, angles, rules, assistant.
-- `system_audit.py` — 26 self-checks (`python system_audit.py`).
+- `history_db.py`, `harvest.py` — the history database and the Form King harvester.
+- `field_check.py` — pull one card and list every field the feed carries.
+- `system_audit.py` — self-checks (`python system_audit.py`), incl. a no-fabrication check.

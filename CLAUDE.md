@@ -17,6 +17,11 @@
   only — never hard-coded or committed. Race timing uses
   `ZoneInfo('Australia/Melbourne')`.
 
+- No fabricated inputs: nothing on the card may be generated from a horse's name,
+  a hash or a random number. Missing data shows as "-" (system_audit enforces it).
+- History database: `history_db.py` / `harvest.py`, Postgres schema `edge` in the
+  Supabase VIC FORM project via `DATABASE_URL` (SQLite `history.db` fallback).
+
 ## Core Rules & Schema Standards
 1. Database tables:
    - `meetings`: track_id, track_name, rail_position, condition, track_variant

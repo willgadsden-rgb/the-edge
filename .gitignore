@@ -21,3 +21,6 @@ racing.db
 .DS_Store
 .idea/
 .vscode/
+
+# History database (SQLite fallback when DATABASE_URL is unset)
+history.db

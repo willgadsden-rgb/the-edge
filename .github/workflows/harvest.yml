@@ -1,0 +1,33 @@
+# Pull every Victorian meeting card from Form King into the history database.
+# Morning run: cards, odds, every runner's last 12 runs.
+# Night run: the same cards again, so today's results land in the runs table.
+#
+# Needs three repository secrets (Settings > Secrets and variables > Actions):
+#   FORMKING_API_KEY   your Form King key
+#   FORMKING_BASE_URL  https://api.formking.com.au
+#   DATABASE_URL       Supabase connection string (VIC FORM project, session pooler)
+name: Harvest Form King
+
+on:
+  schedule:
+    - cron: "17 22 * * *"   # 9:17am AEDT / 8:17am AEST
+    - cron: "37 12 * * *"   # 11:37pm AEDT / 10:37pm AEST
+  workflow_dispatch:         # "Run workflow" button for a manual pull
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Harvest today's meetings
+        env:
+          FORMKING_API_KEY: ${{ secrets.FORMKING_API_KEY }}
+          FORMKING_BASE_URL: ${{ secrets.FORMKING_BASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HARVEST_MAX_MEETINGS: "8"
+        run: python harvest.py
