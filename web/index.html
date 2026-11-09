@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SYNDICATE COMMAND // VIC RACING</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg-base: #090c10; --bg-card: #11151d; --accent-orange: #ff6600; --accent-orange-glow: rgba(255, 102, 0, 0.22); }
+    body { background-color: var(--bg-base); color: #e6edf3; font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono-numbers { font-family: 'JetBrains Mono', monospace; font-feature-settings: "tnum" 1; }
+    .btn-orange { background: linear-gradient(135deg, #ff6600 0%, #e65500 100%); color: #ffffff; }
+    .btn-orange:disabled { opacity: .5; cursor: wait; }
+    .syn-input { background-color: #0d1117; border: 1px solid #1e2638; color: #f0f6fc; border-radius: 8px; outline: none; }
+    .nav-tab { color: #9ca3af; border: 1px solid transparent; }
+    .nav-tab.active { background: rgba(255, 102, 0, 0.15); color: #ff6600; border-color: rgba(255, 102, 0, 0.3); }
+    .sect-green { background-color: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+    .sect-yellow { background-color: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+    .sect-red { background-color: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+    .pill { display:inline-block; padding:1px 7px; border-radius:6px; font-size:10px; font-weight:700; letter-spacing:.04em; }
+    .pulse-green { animation: pulseG 2s infinite; }
+    @keyframes pulseG { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); } 70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } }
+    .race-circle { width: 44px; height: 44px; border-radius: 9999px; border: 1px solid #1e2638; background:#11151d; color:#9ca3af; font-weight:800; font-size:13px; flex-shrink:0; }
+    .race-circle.active { background:#ff6600; color:#000; border-color:#ff6600; }
+    .race-circle.done { border-color: rgba(16,185,129,.5); }
+    .race-circle.has-value { box-shadow: 0 0 0 2px rgba(16,185,129,.55); }
+    tr.runner-row { cursor: pointer; }
+    tr.runner-row:hover { background: rgba(255,255,255,.025); }
+    tr.scratched td { opacity: .35; text-decoration: line-through; }
+    .tip { border-bottom: 1px dotted #4b5563; cursor: help; }
+  </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+  <aside class="w-60 bg-[#0d1117] border-r border-[#1e2638] flex-col py-6 px-4 hidden md:flex">
+    <h1 class="text-white font-black text-xl mb-6">SYNDICATE <span class="text-[#ff6600]">VIC</span></h1>
+    <nav class="space-y-2 flex-1">
+      <button onclick="switchTab('racing')" id="tab-racing-btn" class="nav-tab active w-full text-left px-3 py-2 rounded-lg font-bold">Live Cards</button>
+      <button onclick="switchTab('results')" id="tab-results-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Meeting Review</button>
+      <button onclick="switchTab('guide')" id="tab-guide-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">How to read it</button>
+    </nav>
+    <div class="text-[10px] text-gray-500 leading-relaxed">
+      Scores and prices from The Edge engine (Form King data only). Not financial advice.
+    </div>
+  </aside>
+
+  <main class="flex-1 flex flex-col overflow-y-auto bg-[#090c10]">
+    <header class="bg-[#0d1117] p-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#1e2638] sticky top-0 z-30">
+      <div class="flex flex-wrap items-center gap-3">
+        <select id="meetingSelect" onchange="loadMeeting(this.value)" class="syn-input w-56 px-3 py-2 font-bold"></select>
+        <input type="date" id="calendarInput" class="syn-input py-1.5 px-3 bg-[#11151d] text-white" />
+        <span id="publishedLabel" class="text-[11px] text-gray-500 font-mono-numbers"></span>
+      </div>
+      <div class="flex flex-wrap items-center gap-3">
+        <button onclick="refreshPrices()" id="refreshBtn" title="Pull fresh prices for this meeting from Form King (5 credits)"
+                class="text-xs font-bold text-gray-300 border border-[#1e2638] bg-[#11151d] px-3 py-1.5 rounded-lg hover:border-gray-500">Refresh prices</button>
+        <label class="flex items-center gap-2 text-xs font-bold text-gray-400 cursor-pointer border border-[#1e2638] bg-[#11151d] px-3 py-1.5 rounded-lg hover:border-gray-600 transition"
+               title="Refresh prices every 10 minutes while on (about 30 credits an hour for this meeting)">
+          <input type="checkbox" id="autoOddsToggle" onchange="toggleAutoPrices()" class="w-3 h-3 accent-[#10b981]" />
+          <span id="autoOddsLabel">Auto prices: OFF</span>
+        </label>
+        <button onclick="triggerSync()" id="syncBtn" title="Run the engine for this date: pull the Victorian cards, score and price every race (about 2 minutes)"
+                class="btn-orange px-4 py-2 rounded font-bold text-xs uppercase shadow-lg">Sync Data</button>
+      </div>
+    </header>
+    <nav class="md:hidden flex gap-2 px-4 py-2 border-b border-[#1e2638] bg-[#0d1117]">
+      <button onclick="switchTab('racing')" id="mtab-racing-btn" class="nav-tab active px-3 py-1.5 rounded-lg font-bold text-xs">Live Cards</button>
+      <button onclick="switchTab('results')" id="mtab-results-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Review</button>
+      <button onclick="switchTab('guide')" id="mtab-guide-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Guide</button>
+    </nav>
+    <div id="statusBar" class="hidden px-6 py-2 text-xs font-mono-numbers border-b border-[#1e2638] bg-[#0d1117]"></div>
+
+    <div class="p-4 md:p-6">
+      <!-- LIVE CARDS -->
+      <section id="section-racing" class="space-y-6">
+        <div id="raceCirclesContainer" class="flex items-center gap-2 overflow-x-auto pb-2"></div>
+        <div id="emptyState" class="hidden bg-[#11151d] border border-[#1e2638] rounded-xl p-10 text-center text-gray-400"></div>
+
+        <!-- ALL RACES -->
+        <div id="view-all-races" class="hidden space-y-6">
+          <div class="bg-[#11151d] p-6 rounded-xl border border-[#1e2638] shadow-2xl">
+            <h3 class="text-white font-black text-xl mb-1">Card summary</h3>
+            <p class="text-[11px] text-gray-500 mb-3">Written automatically from the numbers below: top of our book, best form, likely leader and value per race.</p>
+            <div id="cardSummary" class="font-mono-numbers text-sm text-gray-300 space-y-1"></div>
+          </div>
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest border-b border-[#1e2638] pb-2">Meeting Overview</h2>
+          <div id="allRacesCards" class="grid grid-cols-1 lg:grid-cols-2 gap-6"></div>
+        </div>
+
+        <!-- ONE RACE -->
+        <div id="individual-race-views" class="hidden space-y-4">
+          <div id="raceHeader" class="flex flex-wrap items-center gap-2"></div>
+          <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl">
+            <div class="p-4 border-b border-[#1e2638] flex flex-wrap gap-2 justify-between items-center bg-[#0d1117]">
+              <h2 class="text-white font-black text-lg">Odds Matrix</h2>
+              <span id="liveOddsIndicator" class="hidden px-2 py-1 bg-emerald-900/30 text-emerald-400 border border-emerald-500/50 rounded text-[10px] uppercase tracking-widest pulse-green font-bold"></span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left font-mono-numbers text-xs">
+                <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider border-b border-[#1e2638]">
+                  <tr>
+                    <th class="p-3" title="Saddlecloth number">TAB</th>
+                    <th class="p-3 font-sans" title="Horse, jockey and trainer">Horse</th>
+                    <th class="p-3" title="Barrier">Bar</th>
+                    <th class="p-3" title="Expected settling position from its real in-run history (1 = leader)">Map</th>
+                    <th class="p-3 text-white" title="Form rating: its expected run today in lengths against the median winner of this class at this level of track">Form L</th>
+                    <th class="p-3" title="Its best relevant recent run, in lengths against the same par">Ceiling</th>
+                    <th class="p-3" title="How much relevant recent form the rating stands on">Conf</th>
+                    <th class="p-3" title="Run number this preparation; ★ = its best stage on record">Prep</th>
+                    <th class="p-3" title="The model's win chance before the market blend">Model</th>
+                    <th class="p-3 text-[#ffa366]" title="Our price: model blended with the de-vigged market, re-normalised to a 100% book">True Odds</th>
+                    <th class="p-3 text-white" title="Current Form King price (average across bookmakers)">Live</th>
+                    <th class="p-3" title="Value against our price after commission">Edge</th>
+                    <th class="p-3" title="Minimum acceptable odds: don't take less than this">Min</th>
+                    <th class="p-3" title="Value flag: edge 20%+, price at or above the minimum, between $2.20 and $18">Bet</th>
+                  </tr>
+                </thead>
+                <tbody id="runnersTableBody" class="divide-y divide-[#1e2638]"></tbody>
+              </table>
+            </div>
+          </div>
+          <p class="text-[11px] text-gray-500">Click a runner for its last runs and stewards' comments. Prices re-calculate when you refresh them; scores update when you Sync.</p>
+        </div>
+      </section>
+
+      <!-- MEETING REVIEW -->
+      <section id="section-results" class="hidden space-y-6">
+        <div id="pastRacesNav" class="flex gap-2 border-b border-[#1e2638] pb-4 overflow-x-auto"></div>
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl p-6">
+          <h2 class="text-white font-black text-xl mb-1 uppercase tracking-widest">Result review</h2>
+          <p id="reviewNote" class="text-[11px] text-gray-500 mb-4">Results arrive with the night sync (about 11:30pm) or when you press Sync after racing.</p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left font-mono-numbers text-xs">
+              <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider border-b border-[#1e2638]">
+                <tr>
+                  <th class="p-3">Pos</th><th class="p-3 font-sans">Horse</th><th class="p-3">Margin</th>
+                  <th class="p-3" title="Starting price / Betfair SP">SP / BSP</th>
+                  <th class="p-3 text-[#ffa366]" title="Our price before the race">Our price</th>
+                  <th class="p-3" title="Form rating before the race, in lengths vs par">Form L</th>
+                  <th class="p-3 text-white" title="Form King rating for this run">Ran</th>
+                  <th class="p-3 font-sans">Stewards</th>
+                </tr>
+              </thead>
+              <tbody id="reviewBody" class="divide-y divide-[#1e2638]"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- GUIDE -->
+      <section id="section-guide" class="hidden">
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 space-y-3 text-sm text-gray-300 max-w-3xl">
+          <h2 class="text-white font-black text-xl uppercase tracking-widest">How to read it</h2>
+          <p><b class="text-white">Form L</b> — the horse's expected run today in lengths against the typical winner of this class at this level of track (metro, provincial, country). +2.0L means it rates two lengths better than a typical winner. Measured from the history database, not set by hand.</p>
+          <p><b class="text-white">Ceiling</b> — its best relevant recent run on the same scale. A big gap between Form and Ceiling means it can run well above its average.</p>
+          <p><b class="text-white">Conf</b> — High = at least three effective recent runs and two on today's going and trip. Low = treat the rating as a guess.</p>
+          <p><b class="text-white">Prep</b> — run number this preparation from Form King. ★ means its record is best at today's stage (2+ runs there, 1+ point above its average).</p>
+          <p><b class="text-white">Map</b> — expected settling position from its real in-run positions (1 = leader). Debutants sit mid-field until they have form.</p>
+          <p><b class="text-white">Model / True Odds</b> — the model's win chance, then blended with the de-vigged market (70% market, 30% model) into a 100% book. True Odds = 1 ÷ that chance.</p>
+          <p><b class="text-white">Edge / Min / Bet</b> — edge is the live price (after 8% commission) against True Odds. Min = True Odds + 15%. A ✅ needs edge 20%+, the price at or above Min, and odds between $2.20 and $18.</p>
+          <p class="text-gray-500 text-xs">Prices only change when you press Refresh prices (5 Form King credits a meeting) or turn on Auto prices. Scores change when the engine runs: about 9am and 11:30pm daily, or when you press Sync.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+
+<script>
+  const SUPABASE_URL = "https://xquwxvxdoaolggvilqkv.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_Wo3V2pBXOVWXrsnjFxkAWg_o_ym_-NS";
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const VALUE_EDGE = 0.20, MIN_EDGE = 0.15, VALUE_ODDS = [2.20, 18.0];
+  const AUTO_MINUTES = 10;
+
+  const S = { date: null, meetings: [], meeting: null, races: [], runners: {}, view: 'ALL',
+              live: {}, liveAt: null, autoTimer: null, expanded: null, reviewRace: null };
+
+  // ---------- helpers ----------
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const num = (v, d = 1) => (v === null || v === undefined || isNaN(v)) ? '–' : Number(v).toFixed(d);
+  const money = v => (v === null || v === undefined || isNaN(v)) ? '–' : '$' + Number(v).toFixed(2);
+  const signed = (v, d = 1, unit = '') => (v === null || v === undefined || isNaN(v)) ? '–' : (v >= 0 ? '+' : '') + Number(v).toFixed(d) + unit;
+  const melbDate = () => {
+    const p = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const g = t => p.find(x => x.type === t).value;
+    return `${g('year')}-${g('month')}-${g('day')}`;
+  };
+  const melbTime = iso => iso ? new Date(iso).toLocaleTimeString('en-AU', { timeZone: 'Australia/Melbourne', hour: 'numeric', minute: '2-digit' }) : '';
+  const parseJSON = (s, f) => { try { return JSON.parse(s) ?? f; } catch (e) { return f; } };
+  function status(msg, tone = 'gray') {
+    const el = document.getElementById('statusBar');
+    if (!msg) { el.classList.add('hidden'); return; }
+    el.className = `px-6 py-2 text-xs font-mono-numbers border-b border-[#1e2638] bg-[#0d1117] text-${tone}-400`;
+    el.textContent = msg;
+  }
+
+  // ---------- pricing (same maths as the engine: pricing_engine.py) ----------
+  function reprice(race) {
+    const rows = S.runners[race.race_id] || [];
+    const live = S.live[race.race_id] || {};
+    const w = race.market_weight ?? 0.7, comm = race.commission ?? 0.08;
+    const active = rows.filter(r => !(live[r.horse_name] && live[r.horse_name].scratched));
+    const mkt = r => (live[r.horse_name] && live[r.horse_name].avgNow) || r.market_price;
+    const pm = {}; let pmTot = 0;
+    active.forEach(r => { pm[r.horse_name] = r.p_model || 0; pmTot += pm[r.horse_name]; });
+    let raw = {}, rawTot = 0;
+    active.forEach(r => { const m = mkt(r); if (m && m > 1) { raw[r.horse_name] = 1 / m; rawTot += 1 / m; } });
+    const blend = {}; let bTot = 0;
+    active.forEach(r => {
+      const model = pmTot > 0 ? pm[r.horse_name] / pmTot : 0;
+      const market = rawTot > 0 && raw[r.horse_name] ? raw[r.horse_name] / rawTot : null;
+      const b = market === null ? model : (rawTot > 0 ? w : 0) * market + (1 - (rawTot > 0 ? w : 0)) * model;
+      blend[r.horse_name] = b; bTot += b;
+    });
+    rows.forEach(r => {
+      const scr = !active.includes(r);
+      r._scratched = scr;
+      r._market = mkt(r);
+      r._firm = live[r.horse_name] ? live[r.horse_name].firmOrDrift : null;
+      if (scr || !bTot) { r._p = null; r._fair = null; r._edge = null; r._mao = null; r._value = false; r._pmodel = null; return; }
+      r._pmodel = pmTot > 0 ? pm[r.horse_name] / pmTot : null;
+      r._p = blend[r.horse_name] / bTot;
+      r._fair = r._p > 0 ? 1 / r._p : null;
+      const eff = r._market ? 1 + (r._market - 1) * (1 - comm) : null;
+      r._edge = (eff && r._fair) ? eff / r._fair - 1 : null;
+      r._mao = r._fair ? Math.round(r._fair * (1 + MIN_EDGE) * 100) / 100 : null;
+      r._value = !!(r._edge !== null && r._edge >= VALUE_EDGE && r._market >= r._mao && r._market >= VALUE_ODDS[0] && r._market <= VALUE_ODDS[1]);
+    });
+    return rows;
+  }
+
+  // ---------- loading ----------
+  async function loadMeetings(date) {
+    S.date = date;
+    document.getElementById('calendarInput').value = date;
+    const { data, error } = await sb.from('edge_meetings').select('*').eq('meeting_date', date).order('track');
+    const sel = document.getElementById('meetingSelect');
+    S.meetings = data || [];
+    if (error) { status('Could not read the database: ' + error.message, 'red'); }
+    if (!S.meetings.length) {
+      sel.innerHTML = '<option value="">No cards for this date</option>';
+      showEmpty(`No published Victorian cards for ${date}. Press <b class="text-white">Sync Data</b> to pull and score them (about 2 minutes).`);
+      return;
+    }
+    sel.innerHTML = S.meetings.map(m => `<option value="${esc(m.meeting_id)}">${esc(m.track)} · ${esc(m.going || '')}</option>`).join('');
+    const keep = S.meeting && S.meetings.find(m => m.meeting_id === S.meeting.meeting_id);
+    await loadMeeting(keep ? keep.meeting_id : S.meetings[0].meeting_id);
+  }
+
+  async function loadMeeting(id) {
+    if (!id) return;
+    document.getElementById('meetingSelect').value = id;
+    S.meeting = S.meetings.find(m => m.meeting_id === id) || { meeting_id: id };
+    if (S.meetingIdForLive !== id) { S.live = {}; S.liveAt = null; S.meetingIdForLive = id; }
+    const { data: races } = await sb.from('edge_races').select('*').eq('meeting_id', id).order('race_number');
+    S.races = races || [];
+    S.runners = {};
+    if (S.races.length) {
+      const { data: runners } = await sb.from('edge_runners').select('*').in('race_id', S.races.map(r => r.race_id));
+      (runners || []).forEach(r => { (S.runners[r.race_id] = S.runners[r.race_id] || []).push(r); });
+    }
+    S.races.forEach(reprice);
+    document.getElementById('publishedLabel').textContent = S.meeting.published_at
+      ? `Scored ${melbTime(S.meeting.published_at)} · ${S.meeting.rail ? 'Rail ' + S.meeting.rail : ''}` : '';
+    if (S.view !== 'ALL' && !S.races.find(r => r.race_id === S.view)) S.view = 'ALL';
+    renderCircles(); renderView(); renderReview();
+  }
+
+  function showEmpty(html) {
+    document.getElementById('raceCirclesContainer').innerHTML = '';
+    document.getElementById('view-all-races').classList.add('hidden');
+    document.getElementById('individual-race-views').classList.add('hidden');
+    const e = document.getElementById('emptyState'); e.innerHTML = html; e.classList.remove('hidden');
+    document.getElementById('publishedLabel').textContent = '';
+    document.getElementById('reviewBody').innerHTML = '';
+    document.getElementById('pastRacesNav').innerHTML = '';
+  }
+
+  // ---------- rendering ----------
+  function renderCircles() {
+    document.getElementById('emptyState').classList.add('hidden');
+    const c = document.getElementById('raceCirclesContainer');
+    const btn = (id, label, extra = '', title = '') =>
+      `<button onclick="selectView('${id}')" title="${esc(title)}" class="race-circle ${S.view === id ? 'active' : ''} ${extra}">${label}</button>`;
+    c.innerHTML = btn('ALL', 'ALL', '', 'Whole meeting') + S.races.map(r => {
+      const rows = S.runners[r.race_id] || [];
+      const val = rows.some(x => x._value);
+      return btn(r.race_id, 'R' + r.race_number, (r.result_in ? 'done ' : '') + (val ? 'has-value' : ''),
+                 `${melbTime(r.jump_time)} · ${r.distance}m ${r.class_name}${val ? ' · value flagged' : ''}`);
+    }).join('');
+  }
+
+  function selectView(id) { S.view = id; S.expanded = null; renderCircles(); renderView(); }
+
+  function renderView() {
+    const all = document.getElementById('view-all-races'), one = document.getElementById('individual-race-views');
+    if (S.view === 'ALL') { one.classList.add('hidden'); all.classList.remove('hidden'); renderAll(); }
+    else { all.classList.add('hidden'); one.classList.remove('hidden'); renderRace(S.races.find(r => r.race_id === S.view)); }
+    updateLiveIndicator();
+  }
+
+  const byBook = rows => rows.filter(r => !r._scratched).sort((a, b) => (b._p || 0) - (a._p || 0));
+
+  function renderAll() {
+    const lines = [], cards = [];
+    S.races.forEach(race => {
+      const rows = S.runners[race.race_id] || [];
+      const book = byBook(rows);
+      const bestForm = rows.filter(r => !r._scratched && r.form_gap_l !== null).sort((a, b) => b.form_gap_l - a.form_gap_l)[0];
+      const leader = rows.filter(r => !r._scratched && r.settle_rank === 1)[0];
+      const values = rows.filter(r => r._value);
+      const top = book[0];
+      let line = `<span class="text-[#ff6600] font-bold">R${race.race_number}</span> ${melbTime(race.jump_time)} — `;
+      line += top ? `top of our book <b class="text-white">${esc(top.horse_name)}</b> ${money(top._fair)}` : 'no prices';
+      if (bestForm && bestForm !== top) line += `; best form <b class="text-white">${esc(bestForm.horse_name)}</b> ${signed(bestForm.form_gap_l, 1, 'L')}`;
+      if (leader) line += `; likely leader ${esc(leader.horse_name)}`;
+      line += `; tempo ${esc((race.tempo || '').toLowerCase())}`;
+      if (values.length) line += `; <span class="text-emerald-400 font-bold">value: ${values.map(v => esc(v.horse_name) + ' ' + money(v._market)).join(', ')}</span>`;
+      lines.push(`<div>${line}</div>`);
+
+      cards.push(`
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-5 hover:border-[#ff6600]/50 cursor-pointer transition" onclick="selectView('${race.race_id}')">
+          <div class="flex justify-between items-start mb-3">
+            <div>
+              <div class="text-white font-black text-lg">R${race.race_number} <span class="text-gray-400 font-bold text-sm">${melbTime(race.jump_time)}</span></div>
+              <div class="text-[11px] text-gray-500">${race.distance}m · ${esc(race.class_name)} · par ${num(race.form_par)} · ${esc((race.tempo || '').toLowerCase())} tempo</div>
+            </div>
+            ${race.result_in ? '<span class="pill sect-green">RESULT IN</span>' : values.length ? `<span class="pill sect-green">${values.length} VALUE</span>` : ''}
+          </div>
+          <table class="w-full font-mono-numbers text-xs">
+            <thead class="text-gray-500 text-[10px] uppercase"><tr><th class="text-left py-1">Horse</th><th class="text-right">Form L</th><th class="text-right">True</th><th class="text-right">Live</th><th class="text-right">Edge</th></tr></thead>
+            <tbody>${book.slice(0, 4).map(r => `
+              <tr class="border-t border-[#1e2638]">
+                <td class="py-1.5 text-white font-sans font-bold">${r.saddlecloth ?? ''}. ${esc(r.horse_name)} ${r._value ? '✅' : ''}${race.result_in && r.finish_pos ? ` <span class="text-gray-500 font-normal">(${r.finish_pos})</span>` : ''}</td>
+                <td class="text-right ${r.form_gap_l >= 0 ? 'text-emerald-400' : 'text-gray-300'}">${signed(r.form_gap_l, 1, 'L')}</td>
+                <td class="text-right text-[#ffa366]">${money(r._fair)}</td>
+                <td class="text-right text-white">${money(r._market)}</td>
+                <td class="text-right ${r._edge > 0 ? 'text-emerald-400' : 'text-gray-500'}">${r._edge === null ? '–' : signed(r._edge * 100, 0, '%')}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>`);
+    });
+    document.getElementById('cardSummary').innerHTML = lines.join('') || '<div class="text-gray-500">No races.</div>';
+    document.getElementById('allRacesCards').innerHTML = cards.join('');
+  }
+
+  function zoneShort(z) {
+    return ({ 'Leader': 'Leader', "Leader's Back / Box Seat": 'Box seat', 'Handy': 'Handy', 'Midfield': 'Midfield',
+              'Worse Than Midfield': 'Back half', 'Backmarker': 'Back' })[z] || (z || '');
+  }
+
+  function formClass(v) { return v === null || v === undefined ? 'text-gray-500' : v >= 3 ? 'text-emerald-400 font-bold' : v >= 0 ? 'text-emerald-300' : v >= -3 ? 'text-amber-300' : 'text-gray-400'; }
+
+  function renderRace(race) {
+    if (!race) return;
+    const rows = (S.runners[race.race_id] || []).slice().sort((a, b) => (a._scratched - b._scratched) || ((b._p || 0) - (a._p || 0)));
+    const m = S.meeting || {};
+    const chip = (t, title = '') => `<span class="pill bg-[#11151d] border border-[#1e2638] text-gray-300 text-[11px] py-1" title="${esc(title)}">${t}</span>`;
+    document.getElementById('raceHeader').innerHTML =
+      `<span class="text-white font-black text-xl mr-2">R${race.race_number} · ${esc(race.race_name || '')}</span>` +
+      chip(`🕒 ${melbTime(race.jump_time)}`) + chip(`📏 ${race.distance}m`) + chip(`🏷️ ${esc(race.class_name)}`) +
+      chip(`🎯 Par ${num(race.form_par)}`, 'Median winning rating for this class at this level of track') +
+      chip(`🌤️ ${esc(m.going || '')}`) + chip(`🛤️ ${esc(m.rail || '')}`) +
+      chip(`⚡ ${esc((race.tempo || '').toLowerCase())} tempo · ${race.leaders ?? 0} leaders`, 'From the real early speed of the field');
+
+    document.getElementById('runnersTableBody').innerHTML = rows.map(r => {
+      const open = S.expanded === race.race_id + '|' + r.horse_name;
+      const best = r.best_stage && r.best_stage === r.prep_stage;
+      const firm = r._firm;
+      const steam = firm !== null && firm !== undefined && firm > 15 ? ' <span class="text-emerald-400" title="Firming in the market">▲</span>' : firm < -15 ? ' <span class="text-red-400" title="Drifting">▼</span>' : '';
+      return `
+        <tr class="runner-row ${r._scratched ? 'scratched' : ''}" onclick="toggleRow('${race.race_id}', ${JSON.stringify(r.horse_name).replace(/"/g, '&quot;')})">
+          <td class="p-3 text-gray-400 font-bold">${r.saddlecloth ?? ''}</td>
+          <td class="p-3 font-sans">
+            <div class="text-white font-bold">${esc(r.horse_name)} ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}</div>
+            <div class="text-[10px] text-gray-500">${esc(r.jockey || '–')}${r.apprentice_claim ? ` (a${num(r.apprentice_claim, 1)})` : ''} · ${esc(r.trainer || '–')} · ${num(r.weight, 1)}kg</div>
+          </td>
+          <td class="p-3">${r.barrier ?? ''}</td>
+          <td class="p-3" title="${esc(r.map_zone || '')}">${r.settle_rank ?? '–'}<span class="text-[10px] text-gray-500"> ${esc(zoneShort(r.map_zone))}</span></td>
+          <td class="p-3 ${formClass(r.form_gap_l)}">${signed(r.form_gap_l, 1, 'L')}</td>
+          <td class="p-3 text-gray-300">${signed(r.ceiling_gap_l, 1, 'L')}</td>
+          <td class="p-3 text-gray-400">${esc(r.form_confidence || '–')}</td>
+          <td class="p-3">${esc(r.prep_stage || '')}${best ? ' <span class="text-[#ff6600]" title="Best stage on record">★</span>' : ''}</td>
+          <td class="p-3 text-gray-300">${r._pmodel === null ? '–' : num(r._pmodel * 100, 1) + '%'}</td>
+          <td class="p-3 text-[#ffa366] font-bold">${money(r._fair)}</td>
+          <td class="p-3 text-white font-bold">${money(r._market)}${steam}</td>
+          <td class="p-3 ${r._edge > 0 ? 'text-emerald-400' : 'text-gray-500'}">${r._edge === null ? '–' : signed(r._edge * 100, 0, '%')}</td>
+          <td class="p-3 text-gray-400">${money(r._mao)}</td>
+          <td class="p-3">${r._value ? '<span class="pill sect-green">✅ VALUE</span>' : r._scratched ? '<span class="pill sect-red">SCR</span>' : ''}</td>
+        </tr>
+        ${open ? `<tr><td colspan="14" class="p-4 bg-[#0d1117]">${detailPanel(r)}</td></tr>` : ''}`;
+    }).join('') || '<tr><td colspan="14" class="p-10 text-center text-gray-500">No runners.</td></tr>';
+  }
+
+  function detailPanel(r) {
+    const runs = parseJSON(r.last_runs, []);
+    const sig = parseJSON(r.signals, []);
+    const facts = [
+      r.age ? `${r.age}yo ${esc(r.sex || '')}` : '', r.sire ? `by ${esc(r.sire)}` : '',
+      r.career ? `career ${esc(r.career)}` : '', r.days_since_run !== null ? `${r.days_since_run} days since last run` : '',
+      r.distance_change ? esc(r.distance_change.replace(/_/g, ' ').toLowerCase()) : '', r.gear_changes ? 'gear: ' + esc(r.gear_changes) : '',
+      r.best_stage ? `best stage ${esc(r.best_stage)}` : '', r.form_runs ? `rating from ${r.form_runs} runs` : '',
+    ].filter(Boolean).join(' · ');
+    const sigs = sig.length ? sig.map(s => `<span class="pill ${s.points >= 0 ? 'sect-green' : 'sect-red'} mr-1">${esc(s.name)} ${signed(s.points, 1)}</span>`).join('') : '<span class="text-gray-500">none</span>';
+    return `
+      <div class="text-[11px] text-gray-400 mb-2">${facts}</div>
+      <div class="text-[11px] mb-3"><span class="text-gray-500">Signals in the score: </span>${sigs}</div>
+      <table class="w-full text-[11px]">
+        <thead class="text-gray-500 uppercase text-[10px]"><tr>
+          <th class="text-left py-1">Date</th><th class="text-left">Track</th><th>Dist</th><th class="text-left">Going</th><th>Prep</th>
+          <th>Fin</th><th>Margin</th><th>Settled</th><th>Rating</th><th>SP</th><th>BSP</th><th class="text-left">Stewards</th></tr></thead>
+        <tbody>${runs.map(x => `
+          <tr class="border-t border-[#1e2638]">
+            <td class="py-1">${esc(x.date || '')}</td><td>${esc(x.track || '')}</td><td class="text-center">${x.dist ?? ''}</td>
+            <td>${esc(x.going || '')}</td><td class="text-center">${x.prep ?? ''}</td>
+            <td class="text-center ${x.pos === 1 ? 'text-emerald-400 font-bold' : ''}">${x.pos ?? ''}${x.field ? '/' + x.field : ''}</td>
+            <td class="text-center">${x.pos === 1 ? signed(x.margin, 1) : num(x.margin === null ? null : Math.abs(x.margin), 1)}</td>
+            <td class="text-center">${x.settle ?? ''}</td><td class="text-center text-white">${num(x.rating, 1)}</td>
+            <td class="text-center">${money(x.sp)}</td><td class="text-center">${money(x.bsp)}</td>
+            <td class="font-sans ${x.comment ? 'text-amber-300' : 'text-gray-600'}">${esc(x.comment || '')}</td>
+          </tr>`).join('') || '<tr><td colspan="12" class="py-2 text-gray-500">No race runs on file (first starter).</td></tr>'}</tbody>
+      </table>`;
+  }
+
+  function toggleRow(raceId, horse) {
+    const k = raceId + '|' + horse;
+    S.expanded = S.expanded === k ? null : k;
+    renderRace(S.races.find(r => r.race_id === raceId));
+  }
+
+  function renderReview() {
+    const done = S.races.filter(r => r.result_in);
+    const nav = document.getElementById('pastRacesNav');
+    if (!S.reviewRace || !S.races.find(r => r.race_id === S.reviewRace)) S.reviewRace = (done[0] || S.races[0] || {}).race_id;
+    nav.innerHTML = S.races.map(r => `<button onclick="S.reviewRace='${r.race_id}';renderReview()" class="race-circle ${S.reviewRace === r.race_id ? 'active' : ''} ${r.result_in ? 'done' : ''}">R${r.race_number}</button>`).join('');
+    const race = S.races.find(r => r.race_id === S.reviewRace);
+    const body = document.getElementById('reviewBody');
+    if (!race) { body.innerHTML = ''; return; }
+    const rows = (S.runners[race.race_id] || []).slice();
+    if (!race.result_in) {
+      body.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-gray-500">No result yet for this race. It arrives with the night sync, or press Sync Data after racing.</td></tr>';
+      return;
+    }
+    rows.sort((a, b) => (a.finish_pos || 99) - (b.finish_pos || 99));
+    body.innerHTML = rows.map(r => {
+      const outran = (r.result_rating !== null && r.form_gap_l !== null && race.form_par !== null);
+      return `<tr>
+        <td class="p-3 font-bold ${r.finish_pos === 1 ? 'text-emerald-400' : 'text-gray-300'}">${r.finish_pos ?? '–'}</td>
+        <td class="p-3 font-sans text-white font-bold">${r.saddlecloth ?? ''}. ${esc(r.horse_name)}</td>
+        <td class="p-3">${r.finish_pos === 1 ? signed(r.margin, 1) : num(r.margin === null ? null : Math.abs(r.margin), 1)}</td>
+        <td class="p-3">${money(r.result_sp)} / ${money(r.result_bsp)}</td>
+        <td class="p-3 text-[#ffa366]">${money(r.fair_price)}</td>
+        <td class="p-3 ${formClass(r.form_gap_l)}">${signed(r.form_gap_l, 1, 'L')}</td>
+        <td class="p-3 text-white">${num(r.result_rating, 1)}</td>
+        <td class="p-3 font-sans ${r.result_comment ? 'text-amber-300' : 'text-gray-600'}">${esc(r.result_comment || '')}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ---------- tabs ----------
+  function switchTab(tab) {
+    ['racing', 'results', 'guide'].forEach(t => {
+      document.getElementById('section-' + t).classList.toggle('hidden', t !== tab);
+      document.getElementById('tab-' + t + '-btn').classList.toggle('active', t === tab);
+      document.getElementById('mtab-' + t + '-btn').classList.toggle('active', t === tab);
+    });
+  }
+
+  // ---------- prices ----------
+  async function refreshPrices(quiet = false) {
+    if (!S.meeting || !S.meeting.meeting_id) return;
+    const btn = document.getElementById('refreshBtn'); btn.disabled = true; btn.textContent = 'Refreshing…';
+    try {
+      const res = await fetch(`/api/refresh-odds?meetingId=${encodeURIComponent(S.meeting.meeting_id)}`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.status);
+      S.live = body.races || {}; S.liveAt = body.fetchedAt;
+      S.races.forEach(reprice); renderCircles(); renderView();
+      if (!quiet) status(`Prices refreshed ${melbTime(S.liveAt)} (5 Form King credits).`, 'emerald');
+    } catch (e) {
+      status('Price refresh failed: ' + e.message, 'red');
+    } finally { btn.disabled = false; btn.textContent = 'Refresh prices'; }
+  }
+
+  function toggleAutoPrices() {
+    const on = document.getElementById('autoOddsToggle').checked;
+    document.getElementById('autoOddsLabel').textContent = on ? `Auto prices: ON (${AUTO_MINUTES} min)` : 'Auto prices: OFF';
+    clearInterval(S.autoTimer); S.autoTimer = null;
+    if (on) { refreshPrices(true); S.autoTimer = setInterval(() => refreshPrices(true), AUTO_MINUTES * 60 * 1000); }
+    updateLiveIndicator();
+  }
+
+  function updateLiveIndicator() {
+    const el = document.getElementById('liveOddsIndicator');
+    if (!S.liveAt) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = `● Prices ${melbTime(S.liveAt)}${S.autoTimer ? ' · auto' : ''}`;
+  }
+
+  // ---------- sync (runs the engine on GitHub) ----------
+  async function triggerSync() {
+    const btn = document.getElementById('syncBtn'); btn.disabled = true; btn.textContent = 'Starting…';
+    try {
+      const res = await fetch(`/api/sync?date=${encodeURIComponent(S.date || melbDate())}`, { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.status);
+      status('Engine started: pulling the Victorian cards from Form King, then scoring and pricing (about 2 minutes)…', 'amber');
+      btn.textContent = 'Syncing…';
+      const started = Date.now();
+      await new Promise(r => setTimeout(r, 8000));
+      while (Date.now() - started < 10 * 60 * 1000) {
+        const s = await (await fetch('/api/sync')).json();
+        if (s.status === 'completed') {
+          if (s.conclusion === 'success') { status('Sync finished. Loading the new scores…', 'emerald'); await loadMeetings(S.date); status(`Sync finished ${melbTime(new Date().toISOString())}.`, 'emerald'); }
+          else status(`Sync finished with "${s.conclusion}". Open the run on GitHub for details: ${s.url}`, 'red');
+          break;
+        }
+        await new Promise(r => setTimeout(r, 15000));
+      }
+    } catch (e) {
+      status('Sync could not start: ' + e.message, 'red');
+    } finally { btn.disabled = false; btn.textContent = 'Sync Data'; }
+  }
+
+  // ---------- start ----------
+  document.getElementById('calendarInput').addEventListener('change', e => { S.view = 'ALL'; loadMeetings(e.target.value); });
+  loadMeetings(melbDate());
+</script>
+</body>
+</html>

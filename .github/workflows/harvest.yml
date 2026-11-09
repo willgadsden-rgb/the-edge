@@ -1,6 +1,8 @@
 # Pull every Victorian meeting card from Form King into the history database.
-# Morning run: cards, odds, every runner's last 12 runs.
-# Night run: the same cards again, so today's results land in the runs table.
+# Morning run: cards, odds, every runner's last 12 runs; scores and prices are
+# published for the website (public.edge_* tables).
+# Night run: the same cards again, so today's results land in the runs table
+# and on the website's Meeting Review.
 #
 # Needs three repository secrets (Settings > Secrets and variables > Actions):
 #   FORMKING_API_KEY   your Form King key
@@ -12,7 +14,12 @@ on:
   schedule:
     - cron: "17 22 * * *"   # 9:17am AEDT / 8:17am AEST
     - cron: "37 12 * * *"   # 11:37pm AEDT / 10:37pm AEST
-  workflow_dispatch:         # "Run workflow" button for a manual pull
+  workflow_dispatch:         # "Run workflow" button, or the website's Sync button
+    inputs:
+      date:
+        description: "Melbourne date YYYY-MM-DD (blank = today)"
+        required: false
+        default: ""
 
 jobs:
   harvest:
@@ -30,4 +37,6 @@ jobs:
           FORMKING_BASE_URL: ${{ secrets.FORMKING_BASE_URL }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           HARVEST_MAX_MEETINGS: "8"
-        run: python harvest.py
+          HARVEST_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$HARVEST_DATE" ]; then python harvest.py --date "$HARVEST_DATE"; else python harvest.py; fi

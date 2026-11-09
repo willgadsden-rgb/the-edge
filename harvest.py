@@ -279,6 +279,24 @@ def meetings_for(date_iso, upcoming, states=("VIC",)):
     return out, skipped
 
 
+def publish_all(db, cards):
+    """Score and publish the pulled cards for the website (no extra credits).
+    A publishing failure never undoes the harvest."""
+    try:
+        import publish
+        publish.ensure_pub_schema(db)
+        model = publish.load_model(db)
+        for card in cards:
+            try:
+                print("Published {}: {}".format(card.get("trackName") or card.get("id"),
+                                                publish.publish_card(db, card, model)))
+            except Exception as exc:
+                db.conn.rollback()
+                print("PUBLISH FAILED {}: {}".format(card.get("id"), exc), file=sys.stderr)
+    except Exception as exc:
+        print("PUBLISH FAILED: {}".format(exc), file=sys.stderr)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--date", help="Melbourne date YYYY-MM-DD (default: today)")
@@ -286,6 +304,7 @@ def main(argv=None):
     ap.add_argument("--max", type=int, default=None, help="cap meetings this run (credits)")
     ap.add_argument("--dry-run", action="store_true", help="list meetings; fetch no cards")
     ap.add_argument("--keep-raw-days", type=int, default=RAW_KEEP_DAYS)
+    ap.add_argument("--no-publish", action="store_true", help="skip publishing scores for the website")
     args = ap.parse_args(argv)
 
     import os
@@ -299,9 +318,13 @@ def main(argv=None):
     print("History database: {}".format(db.kind))
 
     if args.file:
+        cards = []
         for path in args.file:
             card = json.load(open(path))
             print(path, store_card(db, card, ref=card.get("id")))
+            cards.append(card)
+        if not args.no_publish:
+            publish_all(db, cards)
         db.close()
         return 0
 
@@ -326,10 +349,12 @@ def main(argv=None):
         return 0
 
     failed = 0
+    cards = []
     for m in todays:
         try:
             card = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=m["id"]))
             print(m.get("trackName"), store_card(db, card, ref=m["id"]))
+            cards.append(card)
             if states and (card.get("state") or "").upper() not in states:
                 print("NOTE: {} is in {} - add it to the skip rules".format(
                     m.get("trackName"), card.get("state")))
@@ -339,6 +364,8 @@ def main(argv=None):
             print("SKIPPED {}: {}".format(m.get("trackName") or m["id"], exc), file=sys.stderr)
     db.prune_raw(args.keep_raw_days)
     db.commit()
+    if cards and not args.no_publish:
+        publish_all(db, cards)
     db.close()
     return 1 if failed and failed == len(todays) else 0
 

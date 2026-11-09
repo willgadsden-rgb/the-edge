@@ -18,9 +18,15 @@ from database import get_connection
 # score gap of ~35 points to roughly a 25x win-probability ratio.
 TEMPERATURE = 12.0
 
-# Calibrated softmax temperature for the market-blend model probability (sharper
-# than the legacy book so clear top picks get a realistic win chance).
-BLEND_TEMPERATURE = 2.1
+# Softmax temperature for the model's win probability in the market blend.
+# Fitted on 9 Nov 2026 by maximum likelihood on past races in the history
+# database (each horse scored by the average of its previous 4 ratings):
+#   119 races: T=8 best at -1.97 avg log-likelihood of the winner; T=4 -2.09;
+#              no model at all (T -> infinity) -2.10; devigged SP -1.76.
+#   The old T=2.1 was far too sharp: -2.95 vs -2.10 for T=8 on an 88-race subset,
+#   i.e. worse than not using the model.
+# Refit as the history grows (step 6 replaces this with a full fitted model).
+BLEND_TEMPERATURE = 8.0
 
 # Minimum value edge to flag a runner as a positive-EV overlay.
 OVERLAY_EDGE = 0.20

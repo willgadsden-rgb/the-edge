@@ -1,0 +1,12 @@
+# The Edge website (Netlify). Link this repo in Netlify with base directory "web".
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200

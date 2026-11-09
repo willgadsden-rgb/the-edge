@@ -85,3 +85,18 @@ This is a **Python/Streamlit server app**, so it needs a host that runs Python �
 - `history_db.py`, `harvest.py` — the history database and the Form King harvester.
 - `field_check.py` — pull one card and list every field the feed carries.
 - `system_audit.py` — self-checks (`python system_audit.py`), incl. a no-fabrication check.
+
+## Website (Netlify)
+
+`web/` is the syndicate's website: the original Syndicate design, now reading the
+engine's scores and prices from Supabase (`public.edge_meetings`, `edge_races`,
+`edge_runners`, read-only to the public key). `harvest.py` publishes them after
+every pull (`publish.py`), with no extra Form King credits.
+
+- **Sync Data** starts the GitHub harvest via `web/netlify/functions/sync.js`
+  (needs `GITHUB_TOKEN` in Netlify: a fine-grained token on this repo with
+  Actions: Read and write).
+- **Refresh prices / Auto prices** pull one meeting's odds via
+  `web/netlify/functions/refresh-odds.js` (5 credits each; needs `FORMKING_API_KEY`)
+  and re-price in the browser with the same blend as `pricing_engine.py`.
+- Deploy: link this repo in Netlify with **base directory `web`**.
