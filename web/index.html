@@ -20,6 +20,7 @@
     .sect-yellow { background-color: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
     .sect-red { background-color: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
     .pill { display:inline-block; padding:1px 7px; border-radius:6px; font-size:10px; font-weight:700; letter-spacing:.04em; }
+    .pill.hidden { display:none; }
     .pulse-green { animation: pulseG 2s infinite; }
     @keyframes pulseG { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); } 70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } }
     .race-circle { width: 44px; height: 44px; border-radius: 9999px; border: 1px solid #1e2638; background:#11151d; color:#9ca3af; font-weight:800; font-size:13px; flex-shrink:0; }
@@ -33,7 +34,6 @@
     .rt-btn { padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; background:#11151d; color:#9ca3af; border:1px solid #1e2638; white-space:nowrap; }
     .rt-btn:hover { color:#fff; }
     .rt-btn.active { background:#ff6600; color:#000; border-color:#ff6600; }
-    .jr-horse { transition: transform .9s cubic-bezier(.4,0,.2,1); }
     .map-track { background: repeating-linear-gradient(90deg, rgba(16,185,129,.035) 0 60px, rgba(16,185,129,.06) 60px 120px), #0b1310; }
     .map-lane { border-top: 1px dashed rgba(255,255,255,.06); }
     .map-rail { height: 4px; background: linear-gradient(90deg, #d1d5db, #f9fafb); box-shadow: 0 0 8px rgba(255,255,255,.25); }
@@ -122,7 +122,6 @@
           <!-- SPEED MAP TAB -->
           <div id="rt-map" class="hidden space-y-4">
           <div id="trackProfile"></div>
-          <div id="journeyCard"></div>
           <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl">
             <div class="p-4 border-b border-[#1e2638] flex flex-wrap gap-2 justify-between items-center bg-[#0d1117]">
               <h2 class="text-white font-black text-lg">Speed Map</h2>
@@ -134,7 +133,6 @@
             <div class="md:hidden px-4 pt-2 text-[10px] text-gray-500">Swipe the map sideways to see the leaders →</div>
             <div id="mapRead" class="px-4 pb-4 pt-1 text-xs text-gray-300 space-y-1"></div>
           </div>
-          <div id="journeyTable"></div>
           </div>
           <!-- FORM WORM TAB -->
           <div id="rt-worm" class="hidden"></div>
@@ -233,12 +231,14 @@
       <section id="section-guide" class="hidden">
         <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 space-y-3 text-sm text-gray-300 max-w-3xl">
           <h2 class="text-white font-black text-xl uppercase tracking-widest">How to read it</h2>
-          <p><b class="text-white">Form L</b> — the horse's expected run today in lengths against the typical winner of this class at this level of track (metro, provincial, country). +2.0L means it rates two lengths better than a typical winner. Measured from the history database, not set by hand.</p>
+          <p><b class="text-white">Form L</b>: the horse's expected run today in lengths against the typical winner of this class at this level of track (metro, provincial, country). <b class="text-emerald-400">Green</b> 0 or better = good enough to win. <b class="text-amber-300">Yellow</b> = within 2 lengths under: around the mark, needs a little improvement or a soft race. <b class="text-red-400">Red</b> = more than 2 lengths under. So &minus;2.3L means it rates about 2&frac13; lengths behind a typical winner of today's race.</p>
+          <p><b class="text-white">Rated runs</b>: the small boxes under each horse are its last 5 Form King ratings, oldest to newest (last start on the right, <sup>w</sup> = won), coloured the same way against today's winning par. Hover a box for the run and how many lengths it was off the par.</p>
+          <p><b class="text-white">Ratings to lengths</b>: one rating point is worth about 0.47 lengths at 1000m, 0.55L at 1250m, 0.61L at 1550m, 0.67L at 1900m and 0.74L at 2400m (fitted from horses that met in the same race). So 82.1 vs 74.7 (7.4 points) is roughly 4 lengths at 1200m, 4&frac12; at 1600m and 5 at 2000m. Ratings already allow for the weight carried and age on the day they were run.</p>
           <p><b class="text-white">Ceiling</b> — its best relevant recent run on the same scale. A big gap between Form and Ceiling means it can run well above its average.</p>
           <p><b class="text-white">Conf</b> — High = at least three effective recent runs and two on today's going and trip. Low = treat the rating as a guess.</p>
           <p><b class="text-white">Prep</b> — run number this preparation from Form King. ★ means its record is best at today's stage (2+ runs there, 1+ point above its average).</p>
           <p><b class="text-white">Map</b> — expected settling position from its real in-run positions (1 = leader). Debutants sit mid-field until they have form.</p>
-          <p><b class="text-white">Race tabs</b>: each race has four tabs. <b>Odds Matrix</b> is the prices. <b>Speed Map</b> shows the track profile (run to the first turn, start position, circumference, straight, rail) and the race journey: every horse at the jump, the first turn, settled down the back and at the finish in our book order, plus a "where every horse gets to" table. <b>Form Worm</b> charts every runner's last 8 ratings against the winning par. <b>Track &amp; Barriers</b> shows how winners are spread by barrier and running position at this track and trip, filterable by going and rail.</p>
+          <p><b class="text-white">Race tabs</b>: each race has four tabs. <b>Odds Matrix</b> is the prices. <b>Speed Map</b> tells you where the race starts and how far it is to the first turn, then maps every runner still in the race by its real early speed (scratched horses drop out). <b>Form Worm</b> charts every runner's last 8 ratings against the winning par. <b>Track &amp; Barriers</b> shows how winners are spread by barrier and running position at this track and trip.</p>
           <p><b class="text-white">First-turn distances</b> are published figures where we have them; otherwise they're estimates from the track's circumference and straight (marked ≈ and "estimate"). If your race book map says different, type the real figure in and it's used from then on (on your device).</p>
           <p><b class="text-white">Speed Map</b> — every runner placed where it should settle: front of the field on the right (heading to the post), fence at the top. Tags: <b>3W</b> caught three-wide with no cover, <b>P</b> pocketed on the fence, <b>BS</b> box seat behind the leader, <b>D</b> in a speed duel. Orange is the top of our book, a green ring is a value flag. Tempo comes from how many genuine speed horses are in the race.</p>
           <p><b class="text-white">Model / True Odds</b> — the model's win chance, then blended with the de-vigged market (70% market, 30% model) into a 100% book. True Odds = 1 ÷ that chance.</p>
@@ -295,7 +295,7 @@
     const rows = S.runners[race.race_id] || [];
     const live = S.live[race.race_id] || {};
     const w = race.market_weight ?? 0.7, comm = race.commission ?? 0.08;
-    const active = rows.filter(r => !(live[r.horse_name] && live[r.horse_name].scratched));
+    const active = rows.filter(r => !r.scratched && !(live[r.horse_name] && live[r.horse_name].scratched));
     const mkt = r => (live[r.horse_name] && live[r.horse_name].avgNow) || r.market_price;
     const pm = {}; let pmTot = 0;
     active.forEach(r => { pm[r.horse_name] = (window.EdgeMods ? EdgeMods.chance(r, race) : r.p_model) || 0; pmTot += pm[r.horse_name]; });
@@ -446,7 +446,7 @@
               'Worse Than Midfield': 'Back half', 'Backmarker': 'Back' })[z] || (z || '');
   }
 
-  function formClass(v) { return v === null || v === undefined ? 'text-gray-500' : v >= 3 ? 'text-emerald-400 font-bold' : v >= 0 ? 'text-emerald-300' : v >= -3 ? 'text-amber-300' : 'text-gray-400'; }
+  function formClass(v) { return v === null || v === undefined ? 'text-gray-500' : v >= 3 ? 'text-emerald-400 font-bold' : v >= 0 ? 'text-emerald-300' : v >= -2 ? 'text-amber-300' : 'text-red-400'; }
 
   function renderRace(race) {
     if (!race) return;
@@ -474,11 +474,11 @@
           <td class="p-3 font-sans">
             <div class="text-white font-bold"><button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" title="Open full form" onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${esc(r.horse_name)}</button> ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}</div>
             <div class="text-[10px] text-gray-500">${esc(r.jockey || '–')}${r.apprentice_claim ? ` (a${num(r.apprentice_claim, 1)})` : ''} · ${esc(r.trainer || '–')} · ${num(r.weight, 1)}kg</div>
-            <div class="mt-1">${angleTags(r, race)}</div>
+            <div class="mt-1.5">${ratedRuns(r, race)}</div>
           </td>
           <td class="p-3">${r.barrier ?? ''}</td>
           <td class="p-3" title="${esc(r.map_zone || '')}">${r.settle_rank ?? '–'}<span class="text-[10px] text-gray-500"> ${esc(zoneShort(r.map_zone))}</span></td>
-          <td class="p-3 ${formClass(r.form_gap_l)}">${signed(r.form_gap_l, 1, 'L')}</td>
+          <td class="p-3 ${formClass(r.form_gap_l)}" title="${esc(formTip(r.form_gap_l))}">${signed(r.form_gap_l, 1, 'L')}</td>
           <td class="p-3 text-gray-300">${signed(r.ceiling_gap_l, 1, 'L')}</td>
           <td class="p-3 text-gray-400">${esc(r.form_confidence || '–')}</td>
           <td class="p-3">${esc(r.prep_stage || '')}${best ? ' <span class="text-[#ff6600]" title="Best stage on record">★</span>' : ''}</td>
@@ -489,7 +489,7 @@
           <td class="p-3 text-gray-400">${money(r._mao)}</td>
           <td class="p-3">${r._value ? '<span class="pill sect-green">✅ VALUE</span>' : r._scratched ? '<span class="pill sect-red">SCR</span>' : ''}</td>
         </tr>
-        ${open ? `<tr><td colspan="14" class="p-4 bg-[#0d1117]">${detailPanel(r)}</td></tr>` : ''}`;
+        ${open ? `<tr><td colspan="14" class="px-4 py-5 md:px-6 bg-[#0d1117]">${detailPanel(r, race)}</td></tr>` : ''}`;
     }).join('') || '<tr><td colspan="14" class="p-10 text-center text-gray-500">No runners.</td></tr>';
   }
 
@@ -513,12 +513,15 @@
 
   function renderSpeedMap(race) {
     const box = document.getElementById('speedMap');
-    const rows = (S.runners[race.race_id] || []).filter(r => !r._scratched && r.settle_rank);
-    const tempo = (race.tempo || '').toUpperCase();
+    const rows = (S.runners[race.race_id] || []).filter(r => !r._scratched && !r.scratched && r.settle_rank);
+    // Tempo from the runners actually racing: genuine early speed is 7+ out of 10
+    // from their real in-run positions (same rule as the engine).
+    const speedGroup = rows.filter(r => (r.early_speed || 0) >= 7).sort((a, b) => b.early_speed - a.early_speed);
+    const tempo = speedGroup.length >= 4 ? 'SUICIDAL' : speedGroup.length === 3 ? 'FAST' : ((race.tempo || '').toUpperCase() === 'SLOW' ? 'SLOW' : 'GENUINE');
     const tempoTone = { SUICIDAL: 'sect-red', FAST: 'sect-yellow', GENUINE: 'sect-green', SLOW: 'sect-green' }[tempo] || '';
     document.getElementById('mapChips').innerHTML =
       `<span class="pill ${tempoTone} text-[11px] py-1">${esc(tempo.toLowerCase() || '–')} tempo</span>` +
-      `<span class="pill bg-[#11151d] border border-[#1e2638] text-gray-300 text-[11px] py-1">${race.leaders ? race.leaders + ' in the speed group' : 'no natural leader'}</span>`;
+      `<span class="pill bg-[#11151d] border border-[#1e2638] text-gray-300 text-[11px] py-1">${speedGroup.length ? speedGroup.length + ' in the speed group' : 'no natural leader'}</span>`;
     if (!rows.length) {
       box.innerHTML = '<div class="p-8 text-center text-gray-500 text-sm">No map for this race yet.</div>';
       document.getElementById('mapRead').innerHTML = '';
@@ -581,10 +584,10 @@
     // A plain-English read of the map, from the same fields.
     const lines = [];
     const lead = rows[0];
-    const speed = rows.filter(r => r.map_tag === 'Contested Duel');
-    lines.push(`<span class="text-[#ff6600] font-bold">Lead:</span> ${listNames([lead])} from barrier ${lead.barrier ?? '–'}` +
+    const speed = speedGroup;
+    lines.push(`<span class="text-[#ff6600] font-bold">Lead:</span> ${listNames([lead])} from barrier ${lead.barrier ?? '–'} (early speed ${num(lead.early_speed, 1)}/10)` +
       `${lead.map_lane === 'Rail (Fence)' ? ', on the fence' : lead.map_lane ? ', ' + esc(lead.map_lane.toLowerCase()) : ''}` +
-      `${speed.length > 1 ? ` — but ${speed.length - 1} others want it too, so expect a duel` : ''}.`);
+      `${speed.length > 1 ? `. ${speed.length - 1} other${speed.length > 2 ? 's' : ''} with genuine speed want it too: ${speed.filter(x => x !== lead).map(x => `${esc(x.horse_name)} (${num(x.early_speed, 1)}, b${x.barrier ?? '–'})`).join(', ')}${speed.length >= 3 ? ', so expect a duel' : ''}` : speed.length ? '' : '. Nobody with genuine early speed, so the pace may be soft'}.`);
     const box1 = rows.filter(r => r.map_tag === 'Box Seat');
     if (box1.length) lines.push(`<span class="text-emerald-400 font-bold">Dream run:</span> ${listNames(box1)}.`);
     const wide = rows.filter(r => r.map_tag === '3WNC');
@@ -607,35 +610,46 @@
     document.getElementById('mapRead').innerHTML = lines.map(l => `<div>${l}</div>`).join('');
   }
 
-  function detailPanel(r) {
+  function detailPanel(r, race) {
     const runs = parseJSON(r.last_runs, []);
     const sig = parseJSON(r.signals, []);
     const facts = [
       r.age ? `${r.age}yo ${esc(r.sex || '')}` : '', r.sire ? `by ${esc(r.sire)}` : '',
-      r.career ? `career ${esc(r.career)}` : '', r.days_since_run !== null ? `${r.days_since_run} days since last run` : '',
+      r.career ? `career ${esc(r.career)}` : '', r.days_since_run !== null && r.days_since_run !== undefined ? `${r.days_since_run} days since last run` : '',
       r.distance_change ? esc(r.distance_change.replace(/_/g, ' ').toLowerCase()) : '', r.gear_changes ? 'gear: ' + esc(r.gear_changes) : '',
       r.best_stage ? `best stage ${esc(r.best_stage)}` : '', r.form_runs ? `rating from ${r.form_runs} runs` : '',
-    ].filter(Boolean).join(' · ');
-    const sigs = sig.length ? sig.map(s => `<span class="pill ${s.points >= 0 ? 'sect-green' : 'sect-red'} mr-1">${esc(s.name)} ${signed(s.points, 1)}</span>`).join('') : '<span class="text-gray-500">none</span>';
+    ].filter(Boolean);
+    const sigs = sig.length ? sig.map(s => `<span class="pill ${s.points >= 0 ? 'sect-green' : 'sect-red'} mr-1 mb-1">${esc(s.name)} ${signed(s.points, 1)}</span>`).join('') : '<span class="text-gray-500">none</span>';
+    const ang = race ? angleTags(r, race) : '';
+    const par = race && race.form_par;
+    const block = (title, body) => `<div class="bg-[#11151d] border border-[#1e2638] rounded-lg p-4"><div class="text-[10px] text-gray-500 uppercase tracking-widest mb-2">${title}</div>${body}</div>`;
     return `
-      <div class="flex flex-wrap justify-between gap-2 mb-2"><div class="text-[11px] text-gray-400">${facts}</div>
-        <button onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-[11px] font-bold text-[#ff6600] border border-[#ff6600]/40 rounded px-2 py-1 hover:bg-[#ff6600]/10">Full form &amp; records →</button></div>
-      <div class="text-[11px] mb-3"><span class="text-gray-500">Signals in the score: </span>${sigs}</div>
-      <table class="w-full text-[11px]">
-        <thead class="text-gray-500 uppercase text-[10px]"><tr>
-          <th class="text-left py-1">Date</th><th class="text-left">Track</th><th>Dist</th><th class="text-left">Going</th><th>Prep</th>
-          <th>Fin</th><th>Margin</th><th>Settled</th><th>Rating</th><th>SP</th><th>BSP</th><th class="text-left">Stewards</th></tr></thead>
-        <tbody>${runs.map(x => `
-          <tr class="border-t border-[#1e2638]">
-            <td class="py-1">${esc(x.date || '')}</td><td>${esc(x.track || '')}</td><td class="text-center">${x.dist ?? ''}</td>
-            <td>${esc(x.going || '')}</td><td class="text-center">${x.prep ?? ''}</td>
-            <td class="text-center ${x.pos === 1 ? 'text-emerald-400 font-bold' : ''}">${x.pos ?? ''}${x.field ? '/' + x.field : ''}</td>
-            <td class="text-center">${x.pos === 1 ? signed(x.margin, 1) : num(x.margin === null ? null : Math.abs(x.margin), 1)}</td>
-            <td class="text-center">${x.settle ?? ''}</td><td class="text-center text-white">${num(x.rating, 1)}</td>
-            <td class="text-center">${money(x.sp)}</td><td class="text-center">${money(x.bsp)}</td>
-            <td class="font-sans ${x.comment ? 'text-amber-300' : 'text-gray-600'}">${esc(x.comment || '')}</td>
-          </tr>`).join('') || '<tr><td colspan="12" class="py-2 text-gray-500">No race runs on file (first starter).</td></tr>'}</tbody>
-      </table>`;
+      <div class="space-y-4 py-2" onclick="event.stopPropagation()">
+        <div class="flex flex-wrap justify-between items-start gap-3">
+          <div class="flex flex-wrap gap-2">${facts.map(f => `<span class="px-2.5 py-1 rounded-md bg-[#11151d] border border-[#1e2638] text-[11px] text-gray-300">${f}</span>`).join('')}</div>
+          <button onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-xs font-bold text-[#ff6600] border border-[#ff6600]/40 rounded-lg px-3 py-1.5 hover:bg-[#ff6600]/10 whitespace-nowrap">Full form &amp; records →</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          ${block('Signals in the score', sigs)}
+          ${block('Angles (Pattern Lab)', ang || '<span class="text-gray-500 text-[11px]">none</span>')}
+        </div>
+        ${block('Last runs', `<div class="overflow-x-auto"><table class="w-full text-xs">
+          <thead class="text-gray-500 uppercase text-[10px]"><tr>
+            <th class="text-left py-2 pr-3">Date</th><th class="text-left pr-3">Track</th><th class="px-2">Dist</th><th class="text-left px-2">Going</th><th class="px-2">Prep</th>
+            <th class="px-2">Fin</th><th class="px-2">Margin</th><th class="px-2">Settled</th><th class="px-2">Rating</th><th class="px-2">SP</th><th class="px-2">BSP</th><th class="text-left pl-3">Stewards</th></tr></thead>
+          <tbody>${runs.map(x => `
+            <tr class="border-t border-[#1e2638]">
+              <td class="py-2 pr-3 whitespace-nowrap">${esc(x.date || '')}</td><td class="pr-3 whitespace-nowrap">${esc(x.track || '')}</td><td class="text-center px-2">${x.dist ?? ''}</td>
+              <td class="px-2 whitespace-nowrap">${esc(x.going || '')}</td><td class="text-center px-2">${x.prep ?? ''}</td>
+              <td class="text-center px-2 ${x.pos === 1 ? 'text-emerald-400 font-bold' : ''}">${x.pos ?? ''}${x.field ? '/' + x.field : ''}</td>
+              <td class="text-center px-2">${x.pos === 1 ? signed(x.margin, 1) : num(x.margin === null ? null : Math.abs(x.margin), 1)}</td>
+              <td class="text-center px-2">${x.settle ?? ''}</td>
+              <td class="text-center px-2 font-bold ${ratingClass(x.rating, par, race)}">${num(x.rating, 1)}</td>
+              <td class="text-center px-2">${money(x.sp)}</td><td class="text-center px-2">${money(x.bsp)}</td>
+              <td class="pl-3 font-sans ${x.comment ? 'text-amber-300' : 'text-gray-600'}">${esc(x.comment || '')}</td>
+            </tr>`).join('') || '<tr><td colspan="12" class="py-3 text-gray-500">No race runs on file (first starter).</td></tr>'}</tbody>
+        </table></div>`)}
+      </div>`;
   }
 
   function toggleRow(raceId, horse) {

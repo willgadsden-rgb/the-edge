@@ -72,18 +72,6 @@ function trackGeom(trackName, distance) {
   return g;
 }
 
-// Point on the oval, p metres back from the post, o metres out from the rail.
-function ovalPoint(g, p, o) {
-  const { H, S, R, B, C } = g;
-  p = ((p % C) + C) % C;
-  const r = R + o;
-  if (p < H) return [H - p, R + r];                          // home straight (x from the left bend end)
-  if (p < H + B) { const f = (p - H) / R; return [-r * Math.sin(f), R + r * Math.cos(f)]; }
-  if (p < H + B + S) return [p - H - B, R - r];             // back straight, heading right when read backwards
-  if (p < H + 2 * B + S) { const f = (p - H - B - S) / R; return [S + r * Math.sin(f), R - r * Math.cos(f)]; }
-  return [S - (p - H - 2 * B - S), R + r];                   // past the post
-}
-
 // ---------------------------------------------------------------- tab switching
 function setRaceTab(tab) {
   S.raceTab = tab;
@@ -96,7 +84,7 @@ function renderRaceTab(race) {
   const tab = S.raceTab || 'odds';
   document.querySelectorAll('#raceTabs .rt-btn').forEach(b => b.classList.toggle('active', b.dataset.rt === tab));
   ['odds', 'map', 'worm', 'track'].forEach(t => document.getElementById('rt-' + t).classList.toggle('hidden', t !== tab));
-  if (tab === 'map') { renderTrackProfile(race); renderJourney(race); renderSpeedMap(race); renderJourneyTable(race); }
+  if (tab === 'map') { renderTrackProfile(race); renderSpeedMap(race); }
   if (tab === 'worm') renderWorm(race);
   if (tab === 'track') renderTrackStats(race);
 }
@@ -107,175 +95,32 @@ function railMetres(rail) { const m = String(rail || '').match(/([+-]?\d+(\.\d+)
 function renderTrackProfile(race) {
   const m = S.meeting || {}, g = trackGeom(m.track, race.distance);
   const box = document.getElementById('trackProfile');
-  const fact = (k, v, tip = '') => `<div class="bg-[#0d1117] border border-[#1e2638] rounded-lg p-3" title="${esc(tip)}"><div class="text-[10px] text-gray-500 uppercase tracking-widest">${k}</div><div class="text-white font-bold text-sm mt-0.5">${v}</div></div>`;
-  let turn = '–', turnTip = '';
+  let turn = 'Unknown', turnNote = '';
   if (g) {
-    if (g.firstTurn === 'straight') turn = 'No turn: straight course';
+    if (g.firstTurn === 'straight') turn = 'No turn (straight course)';
     else if (g.firstTurn === 0) turn = 'Starts on the turn';
     else turn = `${g.turnSrc === 'estimate' ? '≈ ' : ''}${Math.round(g.firstTurn / 10) * 10}m`;
-    turnTip = g.turnSrc === 'estimate' ? 'Estimated from the circumference and home straight (two equal straights, two even bends). Real tracks vary; correct it below if your race book map says otherwise.'
-      : g.turnSrc === 'published' ? 'From the published track profile.' : 'Your correction (saved on this device).';
+    turnNote = g.turnSrc === 'estimate' ? 'estimate from the track size' : g.turnSrc === 'published' ? 'published figure' : 'your figure';
   }
+  const start = g ? (g.firstTurn === 'straight' ? 'Straight course' : 'On ' + g.startWhere + (g.laps ? ', passing the post once' : '')) : 'Unknown';
   const rm = railMetres(m.rail);
   box.innerHTML = `
     <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-5 shadow-2xl">
-      <div class="flex flex-wrap justify-between gap-2 mb-3">
-        <h2 class="text-white font-black text-lg">${esc(m.track || '')} ${race.distance}m: track profile</h2>
-        ${g ? `<span class="pill ${g.turnSrc === 'estimate' ? 'sect-yellow' : 'sect-green'} text-[11px] py-1">first turn: ${g.turnSrc}</span>` : ''}
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div><div class="text-[10px] text-gray-500 uppercase tracking-widest">Where they start (${race.distance}m)</div>
+          <div class="text-white font-black text-xl mt-1">${esc(start)}</div></div>
+        <div><div class="text-[10px] text-gray-500 uppercase tracking-widest">Run to the first turn</div>
+          <div class="text-white font-black text-xl mt-1">${turn} <span class="text-[11px] font-normal ${g && g.turnSrc === 'estimate' ? 'text-amber-300' : 'text-gray-500'}">${turnNote}</span></div></div>
       </div>
-      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        ${fact('Run to the first turn', turn, turnTip)}
-        ${fact('Start', g ? (g.firstTurn === 'straight' ? 'straight course' : 'on ' + g.startWhere) + (g.laps ? ` (+${g.laps} lap)` : '') : '–', g && g.turnSrc === 'estimate' ? 'Estimated position of the barriers on the circuit.' : '')}
-        ${fact('Circumference', g ? g.t.circ + 'm' : '–', g ? 'Source: ' + g.t.src : '')}
-        ${fact('Home straight', g ? g.t.straight + 'm' : '–', g ? 'Source: ' + g.t.src : '')}
-        ${fact('Rail', esc(m.rail || '–') + (rm ? ` <span class="text-amber-300 text-xs">(+${rm}m: inside gates lose some edge, runners race a little further)</span>` : ''))}
-        ${fact('Going', esc(m.going || '–'))}
-      </div>
-      ${g ? `<div class="flex flex-wrap items-center gap-2 mt-3 text-[11px] text-gray-400">
-        <span>Know the real run to the first turn from the race book map?</span>
+      <div class="text-[11px] text-gray-500 mt-3">${esc(m.track || '')}${g ? ` · ${g.t.circ}m circuit · ${g.t.straight}m straight` : ''} · rail ${esc(m.rail || '–')}${rm ? ` <span class="text-amber-300">(out ${rm}m: inside draws lose some edge)</span>` : ''} · ${esc(m.going || '')}</div>
+      ${g ? `<div class="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-gray-500">
+        <span>Race book says different?</span>
         <input id="turnFix" type="number" class="syn-input px-2 py-1 w-24 text-xs" placeholder="metres" value="${g.turnSrc === 'yours' ? g.firstTurn : ''}">
         <button class="text-[#ff6600] font-bold" onclick="saveTurnOverride('${esc(m.track)}', ${race.distance}, document.getElementById('turnFix').value); renderRaceTab(S.races.find(r=>r.race_id===S.view))">Save</button>
-        <span class="text-gray-600">(0 = starts on the turn, blank = back to ${g.turnSrc === 'published' ? 'published' : 'estimate'})</span>
-      </div>` : `<p class="text-[11px] text-gray-500 mt-3">No published dimensions for ${esc(m.track || 'this track')} yet, so the track drawing and first-turn distance are off. Send me the circumference and straight and I'll add it.</p>`}
+        <span class="text-gray-600">(0 = starts on the turn; blank = back to the ${g.turnSrc === 'published' ? 'published figure' : 'estimate'})</span>
+      </div>` : `<p class="text-[11px] text-gray-500 mt-2">No published dimensions for ${esc(m.track || 'this track')} yet.</p>`}
     </div>`;
 }
-
-const JOURNEY_STEPS = [
-  { id: 'jump', label: 'The jump' }, { id: 'turn', label: 'First turn' },
-  { id: 'settled', label: 'Settled (home turn)' }, { id: 'finish', label: 'The finish (our book)' },
-];
-
-function journeyRows(race) {
-  const rows = (S.runners[race.race_id] || []).filter(r => !r._scratched);
-  const book = byBook(rows);
-  const finishRank = new Map(book.map((r, i) => [r.horse_name, i + 1]));
-  const settled = rows.slice().sort((a, b) => (a.settle_rank || 99) - (b.settle_rank || 99));
-  const settleRank = new Map(settled.map((r, i) => [r.horse_name, i + 1]));
-  const laneOf = r => Math.max(0, ['Rail (Fence)', 'One-Off', '3-Wide', '4-Wide'].indexOf(r.map_lane));
-  return rows.map(r => ({ r, bar: r.barrier || 1, settle: settleRank.get(r.horse_name), lane: laneOf(r), fin: finishRank.get(r.horse_name) }));
-}
-
-function journeyPositions(g, race, step, jr) {
-  const n = jr.length, gap = 26, laneW = 12;       // metres between runners (exaggerated), metres per lane
-  const turnP = g.firstTurn === 'straight' ? 0 : g.start - (g.firstTurn === 0 ? 30 : Math.max(0, g.firstTurn) + 40);
-  const out = {};
-  jr.forEach(x => {
-    let p, o;
-    if (step === 'jump') { p = g.start; o = (Math.min(x.bar, 16) - 1) * 3.2 + 2; }
-    else if (step === 'turn') { p = turnP + (x.settle - 1) * gap; o = x.lane * laneW + 2; }
-    else if (step === 'settled') { p = g.H + g.B * 0.55 + (x.settle - 1) * gap; o = x.lane * laneW + 2; }
-    else { p = (x.fin - 1) * gap * 0.8; o = ((x.fin - 1) % 3) * laneW + 2; }
-    out[x.r.horse_name] = ovalPoint(g, p, o);
-  });
-  return out;
-}
-
-function renderJourney(race) {
-  const m = S.meeting || {}, g = trackGeom(m.track, race.distance);
-  const box = document.getElementById('journeyCard');
-  if (!g || g.firstTurn === 'straight') { box.innerHTML = ''; return; }
-  const jr = journeyRows(race);
-  const W = 900, Hh = 430, pad = 60;
-  const sx = (W - 2 * pad) / (g.S + 2 * g.R + 40), sy = (Hh - 2 * pad) / (2 * g.R + 40);
-  const sc = Math.min(sx, sy);
-  const ox = W / 2 - (g.S / 2) * sc, oy = Hh / 2 - g.R * sc;
-  const P = ([x, y]) => [ox + x * sc, oy + y * sc];
-  const trackPath = (o) => { const pts = []; for (let p = 0; p <= g.C; p += g.C / 240) pts.push(P(ovalPoint(g, p, o))); return 'M' + pts.map(q => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' L') + ' Z'; };
-  const post = P(ovalPoint(g, 0, -6)), post2 = P(ovalPoint(g, 0, 46));
-  const st = P(ovalPoint(g, g.start, -6)), st2 = P(ovalPoint(g, g.start, 52));
-  const ftP = g.firstTurn === 0 ? null : g.start - g.firstTurn;
-  const book = byBook(jr.map(x => x.r));
-  const top = book[0] && book[0].horse_name;
-  const step = S.journeyStep || 'turn';
-  const pos = journeyPositions(g, race, step, jr);
-  let svg = `<svg viewBox="0 0 ${W} ${Hh}" class="w-full" style="max-height:460px">
-    <path d="${trackPath(-4)}" fill="none" stroke="#e5e7eb" stroke-width="2.5" opacity=".85"/>
-    <path d="${trackPath(48)}" fill="none" stroke="#374151" stroke-width="1.5"/>
-    <path d="${trackPath(22)}" fill="none" stroke="#14532d" stroke-width="${48 * sc}" opacity=".35"/>
-    <line x1="${post[0]}" y1="${post[1]}" x2="${post2[0]}" y2="${post2[1]}" stroke="#ff6600" stroke-width="3"/>
-    <text x="${post2[0]}" y="${post2[1] + 16}" fill="#ff6600" font-size="12" font-weight="800" text-anchor="middle">POST</text>
-    <line x1="${st[0]}" y1="${st[1]}" x2="${st2[0]}" y2="${st2[1]}" stroke="#10b981" stroke-width="3" stroke-dasharray="4 3"/>
-    <text x="${st2[0]}" y="${st2[1] + (st2[1] > oy + g.R * sc ? 16 : -8)}" fill="#10b981" font-size="12" font-weight="800" text-anchor="middle">START ${race.distance}m</text>`;
-  if (ftP !== null) {
-    const a = P(ovalPoint(g, ftP, -6)), b = P(ovalPoint(g, ftP, 48));
-    svg += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="#f59e0b" stroke-width="2" stroke-dasharray="2 3"/>
-      <text x="${(a[0] + b[0]) / 2}" y="${Math.min(a[1], b[1]) - 8}" fill="#f59e0b" font-size="11" font-weight="700" text-anchor="middle">1st turn ${g.turnSrc === 'estimate' ? '≈' : ''}${Math.round(g.firstTurn / 10) * 10}m</text>`;
-  }
-  const ht = P(ovalPoint(g, g.H, -10));
-  svg += `<text x="${ht[0] + 6}" y="${ht[1] - 6}" fill="#6b7280" font-size="10">home turn</text>`;
-  svg += `<text x="${ox + g.S * sc / 2}" y="${oy + g.R * sc + 4}" fill="#4b5563" font-size="11" text-anchor="middle">← racing anti-clockwise</text>`;
-  jr.slice().sort((a, b) => (b.r.horse_name === top) - (a.r.horse_name === top)).reverse().forEach(x => {
-    const [px, py] = P(pos[x.r.horse_name]);
-    const cls = x.r.horse_name === top ? '#ff6600' : x.r._value ? '#10b981' : '#2a3348';
-    svg += `<g class="jr-horse" data-h="${esc(x.r.horse_name)}" style="transform: translate(${px.toFixed(1)}px, ${py.toFixed(1)}px)">
-      <title>${esc(x.r.horse_name)} · barrier ${x.bar} · settles ${x.settle} (${esc(zoneShort(x.r.map_zone) || '')}, ${esc((x.r.map_lane || '').toLowerCase())}) · our book ${x.fin}</title>
-      <circle r="10" fill="${cls}" stroke="${x.r.horse_name === top ? '#ffa366' : '#9ca3af'}" stroke-width="1.5"/>
-      <text y="4" fill="${x.r.horse_name === top ? '#000' : '#fff'}" font-size="10" font-weight="800" text-anchor="middle" font-family="JetBrains Mono, monospace">${x.r.saddlecloth ?? ''}</text></g>`;
-  });
-  svg += '</svg>';
-  const btns = JOURNEY_STEPS.map(s => `<button onclick="journeyStep('${s.id}')" class="rt-btn ${s.id === step ? 'active' : ''}" style="font-size:11px;padding:6px 12px">${s.label}</button>`).join('');
-  box.innerHTML = `
-    <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-5 shadow-2xl">
-      <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
-        <h2 class="text-white font-black text-lg">Race journey</h2>
-        <div class="flex flex-wrap gap-2">${btns}<button onclick="playJourney()" class="rt-btn" style="font-size:11px;padding:6px 12px">▶ Play</button></div>
-      </div>
-      <div class="overflow-x-auto"><div style="min-width:620px">${svg}</div></div>
-      <div class="mt-2"><div class="text-[10px] text-gray-500 uppercase tracking-widest mb-1">From the gates: barrier 1 on the fence, out to the widest (colour = early speed)</div>
-        <div class="flex flex-wrap gap-1">${jr.slice().sort((a, b) => a.bar - b.bar).map(x => { const es = x.r.early_speed; const c = es >= 7 ? '#ff6600' : es >= 5 ? '#f59e0b' : es >= 3 ? '#6b7280' : '#374151';
-          return `<div class="px-2 py-1 rounded text-[11px] font-mono-numbers" style="background:#0d1117;border:1px solid ${c}" title="Early speed ${num(es, 1)}/10 · settles ${ordinal(x.settle)}"><span class="text-gray-500">b${x.bar}</span> <b class="text-white">${x.r.saddlecloth ?? ''}</b> <span class="text-gray-300">${esc(shortName(x.r.horse_name))}</span></div>`; }).join('')}</div></div>
-      <p class="text-[10px] text-gray-500 mt-1">Where every runner is at each stage: barriers at the jump, its expected spot at the first turn and settled down the back, then finishing in our book order. Track drawn from its circumference and straight; gaps between runners are stretched so the numbers are readable. Orange = top of our book, green = value flag. Hover a horse for details.</p>
-    </div>`;
-}
-function journeyStep(step) {
-  S.journeyStep = step;
-  const race = S.races.find(r => r.race_id === S.view); const m = S.meeting || {};
-  const g = trackGeom(m.track, race.distance); if (!g) return;
-  const jr = journeyRows(race), pos = journeyPositions(g, race, step, jr);
-  const svg = document.querySelector('#journeyCard svg');
-  if (!svg) { renderJourney(race); return; }
-  const vb = svg.viewBox.baseVal, W = vb.width, Hh = vb.height, pad = 60;
-  const sc = Math.min((W - 2 * pad) / (g.S + 2 * g.R + 40), (Hh - 2 * pad) / (2 * g.R + 40));
-  const ox = W / 2 - (g.S / 2) * sc, oy = Hh / 2 - g.R * sc;
-  svg.querySelectorAll('g.jr-horse').forEach(el => {
-    const p = pos[el.dataset.h]; if (!p) return;
-    el.style.transform = `translate(${(ox + p[0] * sc).toFixed(1)}px, ${(oy + p[1] * sc).toFixed(1)}px)`;
-  });
-  document.querySelectorAll('#journeyCard .rt-btn').forEach((b, i) => { if (i < JOURNEY_STEPS.length) b.classList.toggle('active', JOURNEY_STEPS[i].id === step); });
-}
-function playJourney() {
-  let i = 0; journeyStep('jump');
-  const tick = () => { i++; if (i < JOURNEY_STEPS.length) { journeyStep(JOURNEY_STEPS[i].id); setTimeout(tick, 1400); } };
-  setTimeout(tick, 1100);
-}
-
-function renderJourneyTable(race) {
-  const jr = journeyRows(race).sort((a, b) => a.settle - b.settle);
-  const g = trackGeom((S.meeting || {}).track, race.distance);
-  const tip = TAG_FLAG;
-  document.getElementById('journeyTable').innerHTML = `
-    <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl">
-      <div class="p-4 border-b border-[#1e2638] bg-[#0d1117]"><h2 class="text-white font-black text-lg">Where every horse gets to</h2></div>
-      <div class="overflow-x-auto"><table class="w-full text-left font-mono-numbers text-xs">
-        <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider"><tr>
-          <th class="p-3 font-sans">Horse</th><th class="p-3">Barrier</th><th class="p-3" title="0-10 from its real early positions">Early speed</th>
-          <th class="p-3">${g && g.firstTurn !== 'straight' ? 'At the first turn' : 'Early'}</th><th class="p-3">Settles</th><th class="p-3">Run</th><th class="p-3 text-[#ffa366]">Finish (our book)</th><th class="p-3">True</th></tr></thead>
-        <tbody class="divide-y divide-[#1e2638]">${jr.map(x => {
-          const f = tip[x.r.map_tag];
-          return `<tr>
-            <td class="p-3 font-sans text-white font-bold">${x.r.saddlecloth ?? ''}. ${esc(x.r.horse_name)}</td>
-            <td class="p-3">${x.bar}</td>
-            <td class="p-3">${num(x.r.early_speed, 1)}</td>
-            <td class="p-3">${ordinal(x.settle)}, ${esc((x.r.map_lane || '–').toLowerCase())}</td>
-            <td class="p-3">${esc(zoneShort(x.r.map_zone) || '–')}</td>
-            <td class="p-3 font-sans text-[11px] ${f ? (x.r.map_tag === 'Box Seat' ? 'text-emerald-400' : 'text-amber-300') : 'text-gray-500'}">${f ? esc(f.why) : 'clear run'}</td>
-            <td class="p-3 text-[#ffa366] font-bold">${ordinal(x.fin)}</td>
-            <td class="p-3">${money(x.r._fair)}</td></tr>`; }).join('')}</tbody>
-      </table></div>
-      <p class="p-3 text-[10px] text-gray-500">"At the first turn" and "Settles" come from each horse's real early positions in its recent runs. "Finish" is our book order (most likely winner first), not a guarantee.</p>
-    </div>`;
-}
-const ordinal = n => !n ? '–' : n + (['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : (n % 10 < 4 ? n % 10 : 0)]);
 
 // ---------------------------------------------------------------- form worm
 const WORM_COLOURS = ['#ff6600', '#10b981', '#38bdf8', '#f472b6', '#facc15', '#a78bfa', '#fb7185', '#34d399', '#60a5fa', '#f97316', '#e879f9', '#22d3ee', '#a3e635', '#fbbf24', '#c084fc', '#4ade80'];

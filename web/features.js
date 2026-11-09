@@ -62,6 +62,50 @@ function angleTags(r, race) {
     `<span class="pill ${a.side === 'back' ? 'sect-green' : 'sect-red'} mr-1" title="${esc(angleTip(a))}">${a.side === 'back' ? '▲' : '▼'} ${esc(a.short)}</span>`).join('');
 }
 
+// ---------------------------------------------------------------- rated runs vs par
+// Lengths per Form King rating point by distance, fitted from same-race pairs in
+// the history (model report, Nov 2026). A race's own fitted value is used when
+// the engine publishes one.
+const LPP = [[950, 0.471], [1250, 0.549], [1550, 0.614], [1900, 0.673], [2400, 0.740]];
+function lppFor(d, race) {
+  if (race && race.lengths_per_point) return race.lengths_per_point;
+  if (!d) return 0.6;
+  if (d <= LPP[0][0]) return LPP[0][1];
+  for (let i = 1; i < LPP.length; i++) if (d <= LPP[i][0]) { const [x0, y0] = LPP[i - 1], [x1, y1] = LPP[i]; return y0 + (y1 - y0) * (d - x0) / (x1 - x0); }
+  return LPP[LPP.length - 1][1];
+}
+// Lengths a rating sits above (+) or below (-) today's winning par.
+function lengthsVsPar(rating, race) {
+  if (!rating || !race || !race.form_par) return null;
+  return (rating - race.form_par) * lppFor(race.distance, race);
+}
+const PAR_BAND = 2;   // lengths: within 2L under par = "around the par"
+function ratingClass(rating, par, race) {
+  if (!rating || !par) return 'text-gray-300';
+  const l = (rating - par) * lppFor(race ? race.distance : (S.races.find(x => x.race_id === S.view) || {}).distance, race);
+  return l >= 0 ? 'text-emerald-400' : l >= -PAR_BAND ? 'text-amber-300' : 'text-red-400';
+}
+function formTip(v) {
+  if (v === null || v === undefined) return 'No rated runs to judge.';
+  const a = Math.abs(v).toFixed(1);
+  return v >= 0 ? `Expected to run ${a} lengths better than a typical winner of this class at this level of track: good enough to win.`
+    : v >= -PAR_BAND ? `Expected to run ${a} lengths below a typical winner here: around the mark, needs a little improvement or a soft race.`
+    : `Expected to run ${a} lengths below a typical winner here: needs big improvement.`;
+}
+// Last five rated runs as coloured chips (oldest to newest, last start on the right).
+function ratedRuns(r, race) {
+  const runs = parseJSON(r.last_runs, []).filter(x => x.rating).slice(0, 5).reverse();
+  if (!runs.length) return '<span class="text-[10px] text-gray-600">no rated runs</span>';
+  return '<span class="inline-flex gap-1 items-center">' + runs.map(x => {
+    const l = lengthsVsPar(x.rating, race);
+    const cls = l === null ? 'border-[#1e2638] text-gray-300' : l >= 0 ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10'
+      : l >= -PAR_BAND ? 'border-amber-500/60 text-amber-300 bg-amber-500/10' : 'border-red-500/50 text-red-300 bg-red-500/10';
+    const tip = `${x.date || ''} ${x.track || ''} ${x.dist ?? ''}m · ${x.pos ?? '?'}/${x.field ?? '?'} · rating ${num(x.rating, 1)}` +
+      (l === null ? '' : ` · ${l >= 0 ? '+' : ''}${l.toFixed(1)}L vs today's par ${num(race.form_par, 1)}`);
+    return `<span class="px-1.5 py-0.5 rounded border text-[10px] font-mono-numbers font-bold ${cls}" title="${esc(tip)}">${Math.round(x.rating)}${x.pos === 1 ? '<sup>w</sup>' : ''}</span>`;
+  }).join('') + '</span>';
+}
+
 // ---------------------------------------------------------------- modifiers
 const MOD_KEY = 'edge_mods_v1';
 const MOD_CAP = 6;           // max total modifier points per horse (score scale)
@@ -305,14 +349,14 @@ function recordTable(title, runs, keyFn, todayKey, order) {
     const avg = rat.length ? rat.reduce((a, b) => a + b, 0) / rat.length : null;
     const hit = k === todayKey;
     return `<tr class="border-t border-[#1e2638] ${hit ? 'bg-[#ff6600]/10' : ''}">
-      <td class="py-1.5 font-sans ${hit ? 'text-[#ff6600] font-bold' : 'text-gray-300'}">${esc(k)}${hit ? ' ◀ today' : ''}</td>
+      <td class="py-2 font-sans ${hit ? 'text-[#ff6600] font-bold' : 'text-gray-300'}">${esc(k)}${hit ? ' ◀ today' : ''}</td>
       <td class="text-center">${xs.length}</td><td class="text-center">${w}-${p - w}</td>
       <td class="text-center ${w / xs.length >= 0.25 ? 'text-emerald-400 font-bold' : ''}">${Math.round(w / xs.length * 100)}%</td>
       <td class="text-center">${Math.round(p / xs.length * 100)}%</td>
       <td class="text-center text-white">${num(avg, 1)}</td><td class="text-center">${num(rat.length ? Math.max(...rat) : null, 1)}</td></tr>`;
   }).join('');
-  return `<div class="bg-[#0d1117] border border-[#1e2638] rounded-lg p-3">
-    <h4 class="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">${title}</h4>
+  return `<div class="bg-[#0d1117] border border-[#1e2638] rounded-lg p-4">
+    <h4 class="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">${title}</h4>
     <table class="w-full font-mono-numbers text-[11px]"><thead class="text-gray-500 text-[10px] uppercase"><tr>
       <th class="text-left">&nbsp;</th><th>Runs</th><th>W-P</th><th>Win</th><th>Place</th><th>Avg rtg</th><th>Best</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" class="text-gray-500 py-1">–</td></tr>'}</tbody></table></div>`;
@@ -404,8 +448,8 @@ function renderHorse(name, runs, ctx, source) {
     </div>
     ${today}
     ${source === 'card' ? '<div class="text-[11px] text-amber-300 mt-2">Showing the last runs from today\'s card. Full history appears after the next engine run.</div>' : ''}
-    <div class="mt-4 bg-[#0d1117] border border-[#1e2638] rounded-lg p-3">${ratingChart(runs, race && race.form_par)}</div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+    <div class="mt-6 bg-[#0d1117] border border-[#1e2638] rounded-lg p-4">${ratingChart(runs, race && race.form_par)}</div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6">
       ${recordTable('Preparation stage', runs, x => STAGE_OF(x.race_in_prep), todayStage, stageOrder)}
       ${recordTable('Track condition', runs, x => GOING_OF(x.going), todayGoing, goingOrder)}
       ${recordTable('Distance', runs, x => DIST_OF(x.distance), todayDist, distOrder)}
@@ -413,19 +457,19 @@ function renderHorse(name, runs, ctx, source) {
       ${recordTable('Tracks', runs, x => x.track || '–', todayTrack, null)}
       ${recordTable('Jockeys', runs, x => x.jockey || '–', r ? r.jockey : null, null)}
     </div>
-    <h3 class="text-white font-black text-lg mt-5 mb-2">Every run</h3>
+    <h3 class="text-white font-black text-lg mt-8 mb-3">Every run</h3>
     <div class="overflow-x-auto"><table class="w-full text-[11px] font-mono-numbers">
       <thead class="text-gray-500 uppercase text-[10px]"><tr>
         <th class="text-left py-1">Date</th><th class="text-left">Track</th><th>Dist</th><th class="text-left">Going</th><th>Stage</th><th>Bar</th><th>Wt</th>
         <th>Fin</th><th>Margin</th><th>Settled</th><th>800</th><th>400</th><th>Rating</th><th>SP</th><th class="text-left">Jockey</th><th class="text-left">Stewards</th></tr></thead>
       <tbody>${runs.map(x => `
         <tr class="border-t border-[#1e2638]">
-          <td class="py-1 whitespace-nowrap">${esc(x.race_date || '')}</td><td class="font-sans">${esc(x.track || '')}</td><td class="text-center">${x.distance ?? ''}</td>
+          <td class="py-2 pr-2 whitespace-nowrap">${esc(x.race_date || '')}</td><td class="font-sans">${esc(x.track || '')}</td><td class="text-center">${x.distance ?? ''}</td>
           <td>${esc(x.going || '')}</td><td class="text-center">${STAGE_OF(x.race_in_prep)}</td><td class="text-center">${x.barrier ?? ''}</td><td class="text-center">${num(x.weight, 1)}</td>
           <td class="text-center ${x.finish_pos === 1 ? 'text-emerald-400 font-bold' : ''}">${x.finish_pos ?? ''}${x.field_size ? '/' + x.field_size : ''}</td>
           <td class="text-center">${x.margin === null || x.margin === undefined ? '' : x.finish_pos === 1 ? signed(x.margin, 1) : num(Math.abs(x.margin), 1)}</td>
           <td class="text-center">${x.settle_pos ?? ''}</td><td class="text-center">${x.pos_800 ?? ''}</td><td class="text-center">${x.pos_400 ?? ''}</td>
-          <td class="text-center text-white">${num(x.wfa_rating, 1)}</td><td class="text-center">${money(x.sp)}</td>
+          <td class="text-center font-bold ${race ? ratingClass(x.wfa_rating, race.form_par, race) : 'text-white'}">${num(x.wfa_rating, 1)}</td><td class="text-center">${money(x.sp)}</td>
           <td class="font-sans whitespace-nowrap">${esc(x.jockey || '')}</td>
           <td class="font-sans ${x.stewards_comment ? 'text-amber-300' : 'text-gray-600'}">${esc(x.stewards_comment || '')}</td>
         </tr>`).join('') || '<tr><td colspan="16" class="py-3 text-gray-500">No runs on file.</td></tr>'}</tbody>

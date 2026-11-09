@@ -51,7 +51,7 @@ PUB_TABLES = {
         "cols": [("race_id", "TEXT"), ("meeting_id", "TEXT"), ("meeting_date", "TEXT"),
                  ("race_number", "INTEGER"), ("race_name", "TEXT"), ("distance", "INTEGER"),
                  ("class_name", "TEXT"), ("class_group", "TEXT"), ("form_par", "REAL"),
-                 ("jump_time", "TEXT"), ("field_size", "INTEGER"), ("tempo", "TEXT"),
+                 ("jump_time", "TEXT"), ("field_size", "INTEGER"), ("tempo", "TEXT"), ("lengths_per_point", "REAL"),
                  ("leaders", "INTEGER"), ("market_weight", "REAL"), ("commission", "REAL"),
                  ("betfair_market_id", "TEXT"), ("result_in", "INTEGER"), ("published_at", "TEXT")],
     },
@@ -72,7 +72,7 @@ PUB_TABLES = {
                  ("value_flag", "INTEGER"), ("stake", "REAL"), ("flucs", "TEXT"), ("last_runs", "TEXT"),
                  ("finish_pos", "INTEGER"), ("margin", "REAL"), ("result_bsp", "REAL"),
                  ("result_sp", "REAL"), ("result_rating", "REAL"), ("result_comment", "TEXT"),
-                 ("published_at", "TEXT")],
+                 ("published_at", "TEXT"), ("scratched", "INTEGER")],
     },
 }
 
@@ -97,6 +97,16 @@ def ensure_pub_schema(db):
             cols.append("{} {}".format(col, typ))
         cols.append("PRIMARY KEY ({})".format(", ".join(spec["key"])))
         cur.execute("CREATE TABLE IF NOT EXISTS {} ({})".format(_tname(db, name), ", ".join(cols)))
+        # Columns added after a table was first created.
+        for col, typ in spec["cols"]:
+            if db.kind == "postgres":
+                cur.execute("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}".format(
+                    _tname(db, name), col, "DOUBLE PRECISION" if typ == "REAL" else typ))
+            else:
+                try:
+                    cur.execute("ALTER TABLE {} ADD COLUMN {} {}".format(_tname(db, name), col, typ))
+                except Exception:
+                    pass
         if db.kind == "postgres":
             # The site reads these with Supabase's public key: allow SELECT only.
             # (Supabase grants anon write access on new public tables by default,
@@ -324,6 +334,15 @@ def publish_card(db, card, model=None, published_at=None):
                 for k in FROZEN_AFTER_RESULT:
                     e_rows[-1][k] = None
 
+        # Runners scratched since an earlier publish: flag them so the site drops
+        # them from the map and the book (the mapping skips scratched runners, so
+        # without this their old row would linger).
+        for sname, se in raw_entries.items():
+            if sname and se.get("scratched"):
+                e_rows.append({"race_id": race_id, "horse_name": sname, "scratched": 1,
+                               "saddlecloth": fk._as_int(se.get("number")), "barrier": fk._as_int(se.get("barrier")),
+                               "published_at": published_at})
+
         betfair = next((x.get("id") for x in ((raw.get("thirdPartyIds") or {}).get("BETFAIR") or [])
                         if x.get("type") == "WIN"), None)
         r_rows.append({
@@ -332,6 +351,7 @@ def publish_card(db, card, model=None, published_at=None):
             "distance": race["distance"], "class_name": race["class_name"],
             "class_group": _class_group(race["class_name"]),
             "form_par": round(par["par"], 1) if par else None,
+            "lengths_per_point": round(model.lengths_per_point(race["distance"]), 3) if model is not None else None,
             "jump_time": datetime.datetime.fromtimestamp(race["jump_time"] / 1000, datetime.timezone.utc).isoformat()
             if race.get("jump_time") else None,
             "field_size": len(scored), "tempo": tempo_tier, "leaders": n_leaders,
@@ -339,6 +359,8 @@ def publish_card(db, card, model=None, published_at=None):
             "result_in": result_in, "published_at": published_at,
         })
 
+    for row in e_rows:
+        row.setdefault("scratched", 0)
     counts = {"edge_meetings": _upsert(db, "edge_meetings", m_rows),
               "edge_races": _upsert(db, "edge_races", r_rows),
               "edge_runners": _upsert(db, "edge_runners", e_rows)}
