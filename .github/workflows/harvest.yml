@@ -2,7 +2,9 @@
 # Morning run: cards, odds, every runner's last 12 runs; scores and prices are
 # published for the website (public.edge_* tables).
 # Night run: the same cards again, so today's results land in the runs table
-# and on the website's Meeting Review.
+# and on the website's Meeting Review. Every default run (and a 1:47am
+# catch-up) also re-pulls any meeting from the last 3 days still missing
+# results, so a skipped night run never loses a meeting's review.
 #
 # Needs three repository secrets (Settings > Secrets and variables > Actions):
 #   FORMKING_API_KEY   your Form King key
@@ -14,6 +16,7 @@ on:
   schedule:
     - cron: "17 22 * * *"   # 9:17am AEDT / 8:17am AEST
     - cron: "37 12 * * *"   # 11:37pm AEDT / 10:37pm AEST
+    - cron: "47 14 * * *"   # 1:47am AEDT: results catch-up only (GitHub sometimes skips a scheduled run)
   workflow_dispatch:         # "Run workflow" button, or the website's Sync button
     inputs:
       date:
@@ -39,4 +42,6 @@ jobs:
           HARVEST_MAX_MEETINGS: "8"
           HARVEST_DATE: ${{ inputs.date }}
         run: |
-          if [ -n "$HARVEST_DATE" ]; then python harvest.py --date "$HARVEST_DATE"; else python harvest.py; fi
+          if [ "${{ github.event.schedule }}" = "47 14 * * *" ]; then python harvest.py --catchup-only
+          elif [ -n "$HARVEST_DATE" ]; then python harvest.py --date "$HARVEST_DATE"
+          else python harvest.py; fi

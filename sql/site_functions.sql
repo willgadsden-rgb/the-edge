@@ -73,3 +73,63 @@ $$;
 GRANT EXECUTE ON FUNCTION public.edge_horse_runs(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.edge_horse_search(text) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.edge_angle_stats(text) TO anon, authenticated;
+
+-- Track & barriers: how winners are spread by barrier and by where they settled,
+-- at one track over a distance range (optionally one going band / rail type).
+-- Impact value (IV) = winners from a group / winners expected if every gate or
+-- position had the same chance (its share of the field). 1.0 = fair, 1.3 = 30%
+-- more winners than its share, 0.7 = 30% fewer. Uses winners only, so it is not
+-- skewed by which losers happen to be in the history.
+CREATE OR REPLACE FUNCTION public.edge_track_stats(p_track text, p_dmin integer, p_dmax integer,
+                                                   p_going text DEFAULT NULL, p_rail text DEFAULT NULL)
+RETURNS TABLE (dim text, bucket text, sort_key integer, races bigint, wins bigint, expected numeric, iv numeric)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
+  WITH w AS (
+    SELECT LEAST(r.barrier, COALESCE(r.field_size, ra.field_size)) AS b,
+           COALESCE(r.field_size, ra.field_size) AS n, r.settle_pos AS s, ra.rail
+    FROM edge.runs r JOIN edge.races ra USING (race_id)
+    WHERE r.finish_pos = 1 AND lower(ra.track) = lower(p_track)
+      AND ra.distance BETWEEN p_dmin AND p_dmax
+      AND r.barrier IS NOT NULL AND r.barrier > 0 AND COALESCE(r.field_size, ra.field_size) >= 5
+      AND (p_going IS NULL
+           OR (p_going = 'Good' AND ra.going ~* '^(good|firm|dead|fast)')
+           OR (p_going = 'Soft' AND ra.going ~* '^(soft|slow)')
+           OR (p_going = 'Heavy' AND ra.going ~* '^heavy')
+           OR (p_going = 'Synthetic' AND ra.going ~* 'synth'))
+      AND (p_rail IS NULL
+           OR (p_rail = 'True' AND ra.rail ~* '^true')
+           OR (p_rail = 'Out' AND ra.rail IS NOT NULL AND ra.rail !~* '^true'))
+  ), z AS (
+    SELECT *, CASE WHEN s = 1 THEN 1 WHEN s <= 3 THEN 2 WHEN s <= ceil(n * 0.6) THEN 3 ELSE 4 END AS zone,
+           GREATEST(ceil(n * 0.6)::int, 3) AS mid_hi
+    FROM w WHERE s IS NOT NULL AND s > 0 AND s <= n
+  ), g(name, lo, hi, k) AS (
+    VALUES ('Inside (1-3)', 1, 3, 1), ('Middle (4-7)', 4, 7, 2), ('Outside (8-11)', 8, 11, 3), ('Wide (12+)', 12, 99, 4)
+  ), zn(name, k) AS (
+    VALUES ('Led', 1), ('On speed (2nd-3rd)', 2), ('Midfield', 3), ('Back half', 4)
+  ), bar AS (
+    SELECT 'barrier'::text AS dim, gs::text AS bucket, gs AS sort_key,
+           (SELECT count(*) FROM w) AS races, (SELECT count(*) FROM w WHERE w.b = gs) AS wins,
+           (SELECT sum(CASE WHEN gs <= w.n THEN 1.0 / w.n ELSE 0 END) FROM w)::numeric AS expected
+    FROM generate_series(1, 16) gs
+  ), grp AS (
+    SELECT 'group'::text, g.name, g.k,
+           (SELECT count(*) FROM w), (SELECT count(*) FROM w WHERE w.b BETWEEN g.lo AND g.hi),
+           (SELECT sum(GREATEST(0, LEAST(g.hi, w.n) - g.lo + 1)::numeric / w.n) FROM w)
+    FROM g
+  ), stl AS (
+    SELECT 'settle'::text, zn.name, zn.k,
+           (SELECT count(*) FROM z), (SELECT count(*) FROM z WHERE z.zone = zn.k),
+           (SELECT sum(CASE zn.k WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN z.mid_hi - 3 ELSE z.n - z.mid_hi END::numeric / z.n) FROM z)
+    FROM zn
+  ), meta AS (
+    SELECT 'meta'::text, 'rail recorded'::text, 0, (SELECT count(*) FROM w), (SELECT count(*) FROM w WHERE w.rail IS NOT NULL), NULL::numeric
+  ), u AS (
+    SELECT * FROM bar UNION ALL SELECT * FROM grp UNION ALL SELECT * FROM stl UNION ALL SELECT * FROM meta
+  )
+  SELECT u.dim, u.bucket, u.sort_key, u.races, u.wins, round(u.expected, 2),
+         CASE WHEN u.expected > 0 THEN round(u.wins / u.expected, 2) END
+  FROM u
+$$;
+
+GRANT EXECUTE ON FUNCTION public.edge_track_stats(text, integer, integer, text, text) TO anon, authenticated;

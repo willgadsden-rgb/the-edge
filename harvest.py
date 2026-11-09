@@ -279,6 +279,40 @@ def meetings_for(date_iso, upcoming, states=("VIC",)):
     return out, skipped
 
 
+def known_meetings(db, date_iso, states=("VIC",)):
+    """Meetings already in the history database for a date. Form King's upcoming
+    list drops a meeting once it has raced, so a past date (e.g. a results pull
+    the next morning) uses the meeting ids we stored when the card was pulled."""
+    try:
+        rows = db.query("SELECT meeting_id, track, state FROM meetings WHERE meeting_date = ?", (date_iso,))
+    except Exception:
+        db.conn.rollback()
+        return []
+    out = []
+    for mid, track, state in rows:
+        if states and (state or "").upper() not in states:
+            continue
+        out.append({"id": mid, "trackName": track, "date": date_iso})
+    return out
+
+
+def results_pending(db, today_iso, days=3):
+    """Published meetings from the last few days whose races still have no
+    result (the night run was missed or ran before the last race)."""
+    since = (datetime.date.fromisoformat(today_iso) - datetime.timedelta(days=days)).isoformat()
+    t = "public.edge_races" if db.kind == "postgres" else "edge_races"
+    tm = "public.edge_meetings" if db.kind == "postgres" else "edge_meetings"
+    try:
+        rows = db.query(
+            "SELECT DISTINCT r.meeting_id, m.track, r.meeting_date FROM {t} r JOIN {tm} m ON m.meeting_id = r.meeting_id "
+            "WHERE r.meeting_date >= ? AND r.meeting_date < ? AND COALESCE(r.result_in, 0) = 0".format(t=t, tm=tm),
+            (since, today_iso))
+    except Exception:
+        db.conn.rollback()
+        return []
+    return [{"id": mid, "trackName": "{} ({}, results)".format(track, d), "date": d} for mid, track, d in rows]
+
+
 def publish_all(db, cards):
     """Score and publish the pulled cards for the website (no extra credits).
     A publishing failure never undoes the harvest."""
@@ -305,6 +339,8 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="list meetings; fetch no cards")
     ap.add_argument("--keep-raw-days", type=int, default=RAW_KEEP_DAYS)
     ap.add_argument("--no-publish", action="store_true", help="skip publishing scores for the website")
+    ap.add_argument("--catchup-only", action="store_true",
+                    help="only re-pull recent meetings that are still missing results")
     args = ap.parse_args(argv)
 
     import os
@@ -335,12 +371,26 @@ def main(argv=None):
         upcoming = upcoming.get("meetings", [])
     states_cfg = (fk._cfg("HARVEST_STATES", "VIC") or "VIC").strip().upper()
     states = None if states_cfg == "ALL" else tuple(x.strip() for x in states_cfg.split(","))
-    todays, skipped = meetings_for(date_iso, upcoming, states)
+    today_iso = datetime.datetime.now(MELBOURNE).date().isoformat()
+    if args.catchup_only:
+        todays, skipped = [], []
+    else:
+        todays, skipped = meetings_for(date_iso, upcoming, states)
+        if not todays and date_iso < today_iso:
+            todays = known_meetings(db, date_iso, states)
+            if todays:
+                print("{} has raced: re-pulling the stored meeting(s) for results.".format(date_iso))
     if skipped:
         print("Not pulled (outside {}): {}".format(states_cfg, ", ".join(skipped)))
     cap = args.max if args.max is not None else int(fk._cfg("HARVEST_MAX_MEETINGS", 0) or 0)
     if cap > 0:
         todays = todays[:cap]
+    if args.catchup_only or (not args.date and fk._cfg("HARVEST_CATCHUP", "1") != "0"):
+        have = {m["id"] for m in todays}
+        extra = [m for m in results_pending(db, today_iso) if m["id"] not in have]
+        if extra:
+            print("Missing results, re-pulling: {}".format(", ".join(m["trackName"] for m in extra)))
+            todays = todays + extra
     print("{} meeting(s) on {}: {} (cost {} credits)".format(
         len(todays), date_iso, ", ".join(m.get("trackName") or m["id"] for m in todays),
         1 + 5 * len(todays)))
