@@ -515,6 +515,15 @@ def _rowget(row, key, default=None):
 _FORM_ERR = {"msg": None}
 
 
+def _redact(text):
+    """Strip passwords from connection errors before they reach the page."""
+    import re
+    text = re.sub(r"(postgres(?:ql)?://[^:/\s\"']+):[^@\s\"']+@", r"\1:****@", text)
+    text = re.sub(r"(postgres\.[A-Za-z0-9]+):[^@\s\"']+@", r"\1:****@", text)
+    text = re.sub(r"(password\s*=\s*)\S+", r"\1****", text, flags=re.I)
+    return text
+
+
 @st.cache_resource(ttl=3600, show_spinner="Loading form history…")
 def _form_model():
     """The v2 form model over the history database (Supabase via DATABASE_URL).
@@ -527,7 +536,7 @@ def _form_model():
             db.close()
         return fm_mod.FormModel(hist) if len(hist) else None
     except Exception as exc:          # no DATABASE_URL / network: card works without it
-        _FORM_ERR["msg"] = str(exc)
+        _FORM_ERR["msg"] = _redact(str(exc))
         return None
 
 

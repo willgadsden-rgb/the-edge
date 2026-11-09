@@ -121,6 +121,10 @@ class HistoryDB:
     def __init__(self, url=None, sqlite_path=None):
         url = url if url is not None else _cfg("DATABASE_URL")
         if url:
+            url = url.strip().strip('"').strip("'")
+            # Accept a string pasted without its scheme ("postgres.xxx:pw@host:5432/db").
+            if "://" not in url and "@" in url:
+                url = "postgresql://" + url
             import psycopg  # psycopg 3; only needed for Postgres
             self.kind = "postgres"
             self.conn = psycopg.connect(url, autocommit=False,
