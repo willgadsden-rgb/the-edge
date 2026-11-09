@@ -100,3 +100,12 @@ every pull (`publish.py`), with no extra Form King credits.
   `web/netlify/functions/refresh-odds.js` (5 credits each; needs `FORMKING_API_KEY`)
   and re-price in the browser with the same blend as `pricing_engine.py`.
 - Deploy: link this repo in Netlify with **base directory `web`**.
+- `web/features.js`: angle tags and the Best plays / Overbet board, Modifiers
+  (race-reading toggles + your own rules, re-pricing on the engine's softmax
+  scale, saved per device), the horse page, Pattern Lab and Track Record.
+- `sql/site_functions.sql`: read-only RPCs the site calls (`edge_horse_runs`,
+  `edge_horse_search`, `edge_angle_stats`). `publish.ensure_pub_schema` applies
+  them on every harvest, so they exist after the next run.
+- Once a race result is in, a publish keeps the pre-race prices and flags
+  (`publish.FROZEN_AFTER_RESULT`), so the Track Record grades what we actually
+  published before the jump.

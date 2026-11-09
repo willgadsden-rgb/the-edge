@@ -111,7 +111,9 @@ def _lane(barrier, es10, zone, is_leader_group, run_to_turn_m, n):
     """
     long_run = run_to_turn_m is not None and run_to_turn_m >= 350
 
-    # Genuine early speed crosses to the fence/one-off regardless of run length.
+    # The leader holds the fence; other genuine speed crosses to the fence/one-off.
+    if zone == ZONE_LEADER:
+        return 1
     if is_leader_group:
         return 1 if barrier <= 5 else 2
 
@@ -127,14 +129,24 @@ def _lane(barrier, es10, zone, is_leader_group, run_to_turn_m, n):
             return 1
         return 1 if barrier <= 4 else 2   # remaining Handy slot in
 
-    # Short run to the turn, or a straight course: not enough time to cross.
-    if barrier <= 2:
+    # No track geometry (the live feed carries none): settle by position in the run
+    # and the draw, the way a form analyst draws a map. Whoever leads holds the
+    # fence; the box seat is the fence behind it; anyone else handy from a middle
+    # or wide gate sits outside them; backmarkers drop in and save ground.
+    if zone == ZONE_LEADER:
         return 1
-    if barrier <= 5:
-        return 2
-    if barrier <= 8:
-        return 3
-    return 4
+    if zone == ZONE_BOXSEAT:
+        return 1 if barrier <= 6 else 2
+    if zone == ZONE_HANDY:
+        if barrier <= 4:
+            return 1
+        return 3 if (barrier >= 10 and es10 >= 5.0) else 2
+    if zone == ZONE_MIDFIELD:
+        if barrier <= 4:
+            return 1
+        return 3 if barrier >= 11 else 2
+    # Worse than midfield / backmarker: ease and slot in.
+    return 1 if barrier <= 7 else 2
 
 
 def _tag(lane, zone, in_duel):
@@ -144,7 +156,7 @@ def _tag(lane, zone, in_duel):
         return TAG_BOXSEAT
     if lane >= 3 and zone in (ZONE_HANDY, ZONE_MIDFIELD, ZONE_WORSE):
         return TAG_3WNC
-    if lane == 1 and zone in (ZONE_MIDFIELD, ZONE_WORSE, ZONE_BACK):
+    if lane == 1 and zone in (ZONE_MIDFIELD, ZONE_WORSE):
         return TAG_POCKETED
     return TAG_CLEAR
 
@@ -296,7 +308,10 @@ def build_tactical_map(entries, geom=None):
         is_leader = name in leaders
         zone = _zone(rank, n, is_leader)
         lane = _lane(e["barrier"], e["_es10"], zone, is_leader, run_to_turn, n)
-        tag = _tag(lane, zone, duel and is_leader)
+        if zone == ZONE_BOXSEAT and lane != 1:
+            zone = ZONE_HANDY      # second in the run but outside the leader, not in the box seat
+        # Only the speed horses actually up there (top three in the order) are in the duel.
+        tag = _tag(lane, zone, duel and is_leader and rank <= 3)
         result[name] = {
             "early_speed": e["_es10"], "es_live": e.get("_es_live", False),
             "rank": rank, "is_leader_group": is_leader,

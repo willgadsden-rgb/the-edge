@@ -49,6 +49,9 @@
     <nav class="space-y-2 flex-1">
       <button onclick="switchTab('racing')" id="tab-racing-btn" class="nav-tab active w-full text-left px-3 py-2 rounded-lg font-bold">Live Cards</button>
       <button onclick="switchTab('results')" id="tab-results-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Meeting Review</button>
+      <button onclick="switchTab('horses')" id="tab-horses-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Horse Search</button>
+      <button onclick="switchTab('lab')" id="tab-lab-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Pattern Lab</button>
+      <button onclick="switchTab('record')" id="tab-record-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Track Record</button>
       <button onclick="switchTab('guide')" id="tab-guide-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">How to read it</button>
     </nav>
     <div class="text-[10px] text-gray-500 leading-relaxed">
@@ -75,9 +78,12 @@
                 class="btn-orange px-4 py-2 rounded font-bold text-xs uppercase shadow-lg">Sync Data</button>
       </div>
     </header>
-    <nav class="md:hidden flex gap-2 px-4 py-2 border-b border-[#1e2638] bg-[#0d1117]">
+    <nav class="md:hidden flex gap-2 overflow-x-auto px-4 py-2 border-b border-[#1e2638] bg-[#0d1117]">
       <button onclick="switchTab('racing')" id="mtab-racing-btn" class="nav-tab active px-3 py-1.5 rounded-lg font-bold text-xs">Live Cards</button>
       <button onclick="switchTab('results')" id="mtab-results-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Review</button>
+      <button onclick="switchTab('horses')" id="mtab-horses-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Horses</button>
+      <button onclick="switchTab('lab')" id="mtab-lab-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Lab</button>
+      <button onclick="switchTab('record')" id="mtab-record-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Record</button>
       <button onclick="switchTab('guide')" id="mtab-guide-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Guide</button>
     </nav>
     <div id="statusBar" class="hidden px-6 py-2 text-xs font-mono-numbers border-b border-[#1e2638] bg-[#0d1117]"></div>
@@ -90,6 +96,7 @@
 
         <!-- ALL RACES -->
         <div id="view-all-races" class="hidden space-y-6">
+          <div id="playsBoard"></div>
           <div class="bg-[#11151d] p-6 rounded-xl border border-[#1e2638] shadow-2xl">
             <h3 class="text-white font-black text-xl mb-1">Card summary</h3>
             <p class="text-[11px] text-gray-500 mb-3">Written automatically from the numbers below: top of our book, best form, likely leader and value per race.</p>
@@ -116,9 +123,14 @@
           </div>
           <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl">
             <div class="p-4 border-b border-[#1e2638] flex flex-wrap gap-2 justify-between items-center bg-[#0d1117]">
-              <h2 class="text-white font-black text-lg">Odds Matrix</h2>
+              <div class="flex items-center gap-3">
+                <h2 class="text-white font-black text-lg">Odds Matrix</h2>
+                <button onclick="toggleModsPanel()" id="modsBtn" class="text-xs font-bold text-gray-300 border border-[#1e2638] bg-[#11151d] px-3 py-1.5 rounded-lg hover:border-[#ff6600]">⚙ Modifiers</button>
+                <span id="modsActive" class="hidden pill sect-yellow text-[11px] py-1">MODIFIERS ON</span>
+              </div>
               <span id="liveOddsIndicator" class="hidden px-2 py-1 bg-emerald-900/30 text-emerald-400 border border-emerald-500/50 rounded text-[10px] uppercase tracking-widest pulse-green font-bold"></span>
             </div>
+            <div id="modsPanel" class="hidden p-5 border-b border-[#1e2638] bg-[#0b0f15]"></div>
             <div class="overflow-x-auto">
               <table class="w-full text-left font-mono-numbers text-xs">
                 <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider border-b border-[#1e2638]">
@@ -153,6 +165,7 @@
         <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl p-6">
           <h2 class="text-white font-black text-xl mb-1 uppercase tracking-widest">Result review</h2>
           <p id="reviewNote" class="text-[11px] text-gray-500 mb-4">Results arrive with the night sync (about 11:30pm) or when you press Sync after racing.</p>
+          <div id="reviewSummary" class="mb-5"></div>
           <div class="overflow-x-auto">
             <table class="w-full text-left font-mono-numbers text-xs">
               <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider border-b border-[#1e2638]">
@@ -171,6 +184,29 @@
         </div>
       </section>
 
+      <!-- HORSE SEARCH -->
+      <section id="section-horses" class="hidden space-y-4 max-w-3xl">
+        <h2 class="text-white font-black text-2xl uppercase tracking-widest">Horse Search</h2>
+        <input id="horseSearchBox" oninput="horseSearchInput(this.value)" class="syn-input w-full p-3 text-base" placeholder="Type a horse's name (two letters or more)" autocomplete="off">
+        <div id="horseResults" class="space-y-2"></div>
+      </section>
+
+      <!-- PATTERN LAB -->
+      <section id="section-lab" class="hidden space-y-4">
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-3">Pattern Lab</h2>
+          <div id="labBody"></div>
+        </div>
+      </section>
+
+      <!-- TRACK RECORD -->
+      <section id="section-record" class="hidden space-y-4">
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-3">Track Record: value flags</h2>
+          <div id="recordBody"></div>
+        </div>
+      </section>
+
       <!-- GUIDE -->
       <section id="section-guide" class="hidden">
         <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 space-y-3 text-sm text-gray-300 max-w-3xl">
@@ -183,12 +219,22 @@
           <p><b class="text-white">Speed Map</b> — every runner placed where it should settle: front of the field on the right (heading to the post), fence at the top. Tags: <b>3W</b> caught three-wide with no cover, <b>P</b> pocketed on the fence, <b>BS</b> box seat behind the leader, <b>D</b> in a speed duel. Orange is the top of our book, a green ring is a value flag. Tempo comes from how many genuine speed horses are in the race.</p>
           <p><b class="text-white">Model / True Odds</b> — the model's win chance, then blended with the de-vigged market (70% market, 30% model) into a 100% book. True Odds = 1 ÷ that chance.</p>
           <p><b class="text-white">Edge / Min / Bet</b> — edge is the live price (after 8% commission) against True Odds. Min = True Odds + 15%. A ✅ needs edge 20%+, the price at or above Min, and odds between $2.20 and $18.</p>
+          <p><b class="text-white">▲ / ▼ angle tags</b>: patterns the history says the market gets wrong (see Pattern Lab). ▲ means the market under-rates these runners (won last start, stepping up in trip, $3 to $6). ▼ means it over-rates them (hard-luck stories, just-beaten runners, dropping back in trip, $25+ roughies). Hover a tag for the numbers.</p>
+          <p><b class="text-white">Best plays / Overbet</b>: top of the meeting page. Best plays are value flags, then top-of-book runners with a ▲ and no ▼. Overbet lists short-priced runners we price longer that carry a ▼, so think twice or lay.</p>
+          <p><b class="text-white">⚙ Modifiers</b>: read the race your way (track bias, pace, draw, Pattern Lab angles) or add your own rules, e.g. "Jockey contains Zahra → +1.5". The book re-prices at once and still adds to 100%. Rules are saved on your device.</p>
+          <p><b class="text-white">Horse page</b>: click a horse's name. Full history from the database: rating chart against today's par, records by prep stage, going, distance, spacing, track and jockey (today's row highlighted), and every run with stewards' notes.</p>
+          <p><b class="text-white">Track Record</b>: every value flag graded at the price we published before the race, with to-win-$100 staking, P&amp;L, ROI, expected vs actual winners and CLV against Betfair SP. Flags are frozen once the result is in.</p>
           <p class="text-gray-500 text-xs">Prices only change when you press Refresh prices (5 Form King credits a meeting) or turn on Auto prices. Scores change when the engine runs: about 9am and 11:30pm daily, or when you press Sync.</p>
         </div>
       </section>
     </div>
   </main>
 
+  <div id="horseOverlay" class="hidden fixed inset-0 z-50 bg-black/75 overflow-y-auto" onclick="if(event.target===this)closeHorse()">
+    <div id="horseBody" class="max-w-5xl mx-auto my-4 md:my-10 bg-[#11151d] border border-[#1e2638] rounded-xl p-4 md:p-6 shadow-2xl"></div>
+  </div>
+
+<script src="features.js"></script>
 <script>
   const SUPABASE_URL = "https://xquwxvxdoaolggvilqkv.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_Wo3V2pBXOVWXrsnjFxkAWg_o_ym_-NS";
@@ -227,7 +273,7 @@
     const active = rows.filter(r => !(live[r.horse_name] && live[r.horse_name].scratched));
     const mkt = r => (live[r.horse_name] && live[r.horse_name].avgNow) || r.market_price;
     const pm = {}; let pmTot = 0;
-    active.forEach(r => { pm[r.horse_name] = r.p_model || 0; pmTot += pm[r.horse_name]; });
+    active.forEach(r => { pm[r.horse_name] = (window.EdgeMods ? EdgeMods.chance(r, race) : r.p_model) || 0; pmTot += pm[r.horse_name]; });
     let raw = {}, rawTot = 0;
     active.forEach(r => { const m = mkt(r); if (m && m > 1) { raw[r.horse_name] = 1 / m; rawTot += 1 / m; } });
     const blend = {}; let bTot = 0;
@@ -367,6 +413,7 @@
     });
     document.getElementById('cardSummary').innerHTML = lines.join('') || '<div class="text-gray-500">No races.</div>';
     document.getElementById('allRacesCards').innerHTML = cards.join('');
+    renderPlays();
   }
 
   function zoneShort(z) {
@@ -388,6 +435,8 @@
       chip(`🌤️ ${esc(m.going || '')}`) + chip(`🛤️ ${esc(m.rail || '')}`) +
       chip(`⚡ ${esc((race.tempo || '').toLowerCase())} tempo · ${race.leaders ?? 0} leaders`, 'From the real early speed of the field');
     renderSpeedMap(race);
+    document.getElementById('modsActive').classList.toggle('hidden', !(window.EdgeMods && EdgeMods.active(race)));
+    if (S._modsRace !== race.race_id) { S._modsRace = race.race_id; if (!document.getElementById('modsPanel').classList.contains('hidden')) renderMods(); }
 
     document.getElementById('runnersTableBody').innerHTML = rows.map(r => {
       const open = S.expanded === race.race_id + '|' + r.horse_name;
@@ -398,8 +447,9 @@
         <tr class="runner-row ${r._scratched ? 'scratched' : ''}" onclick="toggleRow('${race.race_id}', ${JSON.stringify(r.horse_name).replace(/"/g, '&quot;')})">
           <td class="p-3 text-gray-400 font-bold">${r.saddlecloth ?? ''}</td>
           <td class="p-3 font-sans">
-            <div class="text-white font-bold">${esc(r.horse_name)} ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}</div>
+            <div class="text-white font-bold"><button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" title="Open full form" onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${esc(r.horse_name)}</button> ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}</div>
             <div class="text-[10px] text-gray-500">${esc(r.jockey || '–')}${r.apprentice_claim ? ` (a${num(r.apprentice_claim, 1)})` : ''} · ${esc(r.trainer || '–')} · ${num(r.weight, 1)}kg</div>
+            <div class="mt-1">${angleTags(r, race)}</div>
           </td>
           <td class="p-3">${r.barrier ?? ''}</td>
           <td class="p-3" title="${esc(r.map_zone || '')}">${r.settle_rank ?? '–'}<span class="text-[10px] text-gray-500"> ${esc(zoneShort(r.map_zone))}</span></td>
@@ -407,7 +457,7 @@
           <td class="p-3 text-gray-300">${signed(r.ceiling_gap_l, 1, 'L')}</td>
           <td class="p-3 text-gray-400">${esc(r.form_confidence || '–')}</td>
           <td class="p-3">${esc(r.prep_stage || '')}${best ? ' <span class="text-[#ff6600]" title="Best stage on record">★</span>' : ''}</td>
-          <td class="p-3 text-gray-300">${r._pmodel === null ? '–' : num(r._pmodel * 100, 1) + '%'}</td>
+          <td class="p-3 text-gray-300">${r._pmodel === null ? '–' : num(r._pmodel * 100, 1) + '%'}${modBadge(r)}</td>
           <td class="p-3 text-[#ffa366] font-bold">${money(r._fair)}</td>
           <td class="p-3 text-white font-bold">${money(r._market)}${steam}</td>
           <td class="p-3 ${r._edge > 0 ? 'text-emerald-400' : 'text-gray-500'}">${r._edge === null ? '–' : signed(r._edge * 100, 0, '%')}</td>
@@ -543,7 +593,8 @@
     ].filter(Boolean).join(' · ');
     const sigs = sig.length ? sig.map(s => `<span class="pill ${s.points >= 0 ? 'sect-green' : 'sect-red'} mr-1">${esc(s.name)} ${signed(s.points, 1)}</span>`).join('') : '<span class="text-gray-500">none</span>';
     return `
-      <div class="text-[11px] text-gray-400 mb-2">${facts}</div>
+      <div class="flex flex-wrap justify-between gap-2 mb-2"><div class="text-[11px] text-gray-400">${facts}</div>
+        <button onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-[11px] font-bold text-[#ff6600] border border-[#ff6600]/40 rounded px-2 py-1 hover:bg-[#ff6600]/10">Full form &amp; records →</button></div>
       <div class="text-[11px] mb-3"><span class="text-gray-500">Signals in the score: </span>${sigs}</div>
       <table class="w-full text-[11px]">
         <thead class="text-gray-500 uppercase text-[10px]"><tr>
@@ -575,6 +626,7 @@
     nav.innerHTML = S.races.map(r => `<button onclick="S.reviewRace='${r.race_id}';renderReview()" class="race-circle ${S.reviewRace === r.race_id ? 'active' : ''} ${r.result_in ? 'done' : ''}">R${r.race_number}</button>`).join('');
     const race = S.races.find(r => r.race_id === S.reviewRace);
     const body = document.getElementById('reviewBody');
+    renderReviewSummary();
     if (!race) { body.innerHTML = ''; return; }
     const rows = (S.runners[race.race_id] || []).slice();
     if (!race.result_in) {
@@ -599,11 +651,14 @@
 
   // ---------- tabs ----------
   function switchTab(tab) {
-    ['racing', 'results', 'guide'].forEach(t => {
+    ['racing', 'results', 'horses', 'lab', 'record', 'guide'].forEach(t => {
       document.getElementById('section-' + t).classList.toggle('hidden', t !== tab);
       document.getElementById('tab-' + t + '-btn').classList.toggle('active', t === tab);
       document.getElementById('mtab-' + t + '-btn').classList.toggle('active', t === tab);
     });
+    if (tab === 'lab') loadLab();
+    if (tab === 'record') loadRecord();
+    if (tab === 'horses') setTimeout(() => document.getElementById('horseSearchBox').focus(), 50);
   }
 
   // ---------- prices ----------

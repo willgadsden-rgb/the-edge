@@ -250,9 +250,12 @@ def chk_manual_override():
 
 
 def chk_tactical_map():
-    # Short run / straight: wide traps retained.
+    # No geometry: leader on the fence, wide backmarker drops in (one-off),
+    # wide handy speed is caught three-wide.
     lane_in = sm._lane(2, 8.0, sm.ZONE_HANDY, True, None, 10)      # fast inside -> rail
-    lane_wide = sm._lane(10, 3.0, sm.ZONE_BACK, False, None, 10)   # slow wide -> 4-wide
+    lane_wide = sm._lane(10, 3.0, sm.ZONE_BACK, False, None, 10)   # slow wide -> drops in one-off
+    lane_lead = sm._lane(9, 9.0, sm.ZONE_LEADER, True, None, 10)    # leader holds the fence
+    lane_hw = sm._lane(11, 6.0, sm.ZONE_HANDY, False, None, 12)     # wide handy -> 3-wide
     # Long run (>=350m) 600m slotting rule: wide backmarker eases to the rail;
     # only a pressing/handy runner caught wide stays 3-wide.
     slot = sm._lane(9, 3.0, sm.ZONE_BACK, False, 600, 10)
@@ -266,10 +269,10 @@ def chk_tactical_map():
                                 {"horse_name": "Y", "barrier": 9},
                                 {"horse_name": "Z", "barrier": 5}])
     valid = all(r["lane"] in (1, 2, 3, 4) for r in tm["runners"].values())
-    ok = (lane_in == 1 and lane_wide == 4 and slot == 1 and caught == 3
+    ok = (lane_in == 1 and lane_wide == 2 and lane_lead == 1 and lane_hw == 3 and slot == 1 and caught == 3
           and z_lead == sm.ZONE_LEADER and z_back == sm.ZONE_BACK and t_3wnc == sm.TAG_3WNC
           and t_box == sm.TAG_BOXSEAT and t_duel == sm.TAG_DUEL and valid)
-    return (ok, "600m slotting: wide backmarker->Rail, pressing-wide->3-Wide; short-run traps retained; tags correct")
+    return (ok, "600m slotting: wide backmarker->Rail, pressing-wide->3-Wide; no-geometry: leader on fence, backmarkers drop in, wide handy 3-wide; tags correct")
 
 
 def chk_custom_rules():

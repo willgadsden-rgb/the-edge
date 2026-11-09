@@ -18,6 +18,7 @@ probability (p_model) and the market weight, and repeats the blend.
 import datetime
 import json
 import re
+from pathlib import Path
 
 import angle_engine
 import formking_client as fk
@@ -30,6 +31,13 @@ from staking_engine import calculate_mao, calculate_stake, DEFAULT_MIN_EDGE
 MARKET_WEIGHT = 0.70          # same default as the app's market anchoring
 OVERLAY_EDGE = 0.20           # value flag: edge >= 20% and price at/above the minimum
 VALUE_ODDS = (2.20, 18.00)    # ...and inside the odds band the app bets (roughies are noise)
+
+FROZEN_AFTER_RESULT = ("projected", "signals", "p_model", "p_market", "p_blend", "fair_price",
+                       "market_price", "best_price", "edge_pct", "mao", "value_flag", "stake",
+                       "settle_rank", "map_zone", "map_lane", "map_tag", "form_gap_l", "ceiling_gap_l",
+                       "form_confidence", "form_runs")
+
+SITE_FUNCTIONS = Path(__file__).resolve().parent / "sql" / "site_functions.sql"
 
 PUB_TABLES = {
     "edge_meetings": {
@@ -102,6 +110,9 @@ def ensure_pub_schema(db):
                 "AND tablename = '{n}' AND policyname = 'site can read') THEN "
                 "CREATE POLICY \"site can read\" ON {t} FOR SELECT TO anon, authenticated USING (true); "
                 "END IF; END $$".format(n=name, t=t))
+    if db.kind == "postgres":
+        # Read-only RPCs the site uses for the horse page and the Pattern Lab.
+        cur.execute(SITE_FUNCTIONS.read_text())
     db.commit()
 
 
@@ -281,6 +292,12 @@ def publish_card(db, card, model=None, published_at=None):
                 "result_comment": (res.get("stewardsComment") or None) if res else None,
                 "published_at": published_at,
             })
+            if res:
+                # Race is over: keep the pre-race book (the upsert keeps the stored
+                # value when the new one is empty), so the track record grades the
+                # prices and flags we actually published before the jump.
+                for k in FROZEN_AFTER_RESULT:
+                    e_rows[-1][k] = None
 
         betfair = next((x.get("id") for x in ((raw.get("thirdPartyIds") or {}).get("BETFAIR") or [])
                         if x.get("type") == "WIN"), None)
