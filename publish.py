@@ -145,12 +145,36 @@ def _class_group(label):
         return None
 
 
-def _result_for(entry_raw, race_id):
-    """The runner's own result for this race, once it is in its past runs."""
-    for ev in entry_raw.get("pastEvents") or []:
-        if ev.get("raceId") == race_id and ev.get("finishPosition"):
-            return ev
+def winning_margin(race_raw):
+    """Winner's margin = the runner-up's beaten margin (horseResult gives the
+    winner 0.0)."""
+    for e in race_raw.get("entries") or []:
+        hr = e.get("horseResult") or {}
+        if fk._as_int(hr.get("finishPosition")) == 2:
+            return fk._as_float(hr.get("margin"))
     return None
+
+
+def _result_for(entry_raw, race_id, win_margin=None):
+    """The runner's result for this race. Form King puts it on the card itself
+    (entry.horseResult) once the race is run; the runner's past runs pick it up
+    later with the rating and stewards report, which we add when present.
+    Margin convention: winner +winning margin, others -lengths beaten."""
+    hr = entry_raw.get("horseResult") or {}
+    past = next((ev for ev in entry_raw.get("pastEvents") or []
+                 if ev.get("raceId") == race_id and ev.get("finishPosition")), None)
+    pos = fk._as_int(hr.get("finishPosition"))
+    if not pos:
+        return past
+    m = fk._as_float(hr.get("margin"))
+    margin = (win_margin if pos == 1 else (-abs(m) if m is not None else None))
+    return {
+        "finishPosition": pos, "margin": margin,
+        "bsp": hr.get("betfairStartingPrice") or (past or {}).get("bsp"),
+        "startingPrice": hr.get("startingPrice") or (past or {}).get("startingPrice"),
+        "weightForAgeRating": (past or {}).get("weightForAgeRating"),
+        "stewardsComment": (past or {}).get("stewardsComment"),
+    }
 
 
 def _last_runs(runs):
@@ -187,6 +211,7 @@ def publish_card(db, card, model=None, published_at=None):
         raw = raw_races.get(race["race_number"]) or {}
         race_id = raw.get("raceId") or "{}_R{}".format(card.get("id"), race["race_number"])
         raw_entries = {(e.get("horse") or {}).get("name"): e for e in raw.get("entries") or []}
+        win_m = winning_margin(raw)
         entries = []
         for e in race["entries"]:
             d = dict(e)
@@ -259,7 +284,7 @@ def publish_card(db, card, model=None, published_at=None):
             prof = e.get("fk_profile") or {}
             fm = model.rate(name, race["distance"], cond, race["class_name"], track, mdate) if model else {}
             best = model.best_stage(name) if model else None
-            res = _result_for(raw_entries.get(name) or {}, race_id)
+            res = _result_for(raw_entries.get(name) or {}, race_id, win_m)
             result_in = result_in or (1 if res else 0)
             odds = (raw_entries.get(name) or {}).get("odds") or {}
             prep = e.get("prep_run_num") or 1

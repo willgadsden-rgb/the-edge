@@ -565,6 +565,8 @@ function renderReviewSummary() {
       }
       if (r.finish_pos > 1 && r.result_rating && race.form_par && r.result_rating >= race.form_par) {
         follow.push({ race, r, why: `ran ${num(r.result_rating, 1)}, at or above the winning par ${num(race.form_par, 1)}` });
+      } else if (r.finish_pos > 1 && r.finish_pos <= 4 && !r.result_rating && r.margin !== null && Math.abs(r.margin) <= 1.5 && (r.result_bsp || 0) >= 6) {
+        follow.push({ race, r, why: `beaten ${num(Math.abs(r.margin), 1)}L at $${num(r.result_bsp, 2)} on Betfair (ratings land in a day or two)` });
       }
     });
   });
@@ -583,7 +585,7 @@ function renderReviewSummary() {
       <div class="bg-[#0d1117] border border-[#1e2638] rounded-lg p-4">
         <div class="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Horses to follow</div>
         ${follow.slice(0, 6).map(x => `<div class="text-xs"><button class="text-white font-bold hover:text-[#ff6600]" onclick='openHorse(${JSON.stringify(x.r.horse_name).replace(/'/g, "&#39;")})'>${esc(x.r.horse_name)}</button> <span class="text-gray-500">R${x.race.race_number}, ${x.r.finish_pos}th: ${x.why}</span></div>`).join('') || '<div class="text-xs text-gray-500">No beaten runner reached the winning standard.</div>'}
-        <div class="text-[10px] text-gray-500 mt-2">Beaten runners that ran to a winning rating. Watch their price next start: the Pattern Lab shows the market over-bets eye-catching losers, so only back them when we have value.</div>
+        <div class="text-[10px] text-gray-500 mt-2">Beaten runners that ran to a winning rating (or, until ratings land, roughies beaten 1.5L or less). Watch their price next start: the Pattern Lab shows the market over-bets eye-catching losers, so only back them when we have value.</div>
       </div>
     </div>`;
 }

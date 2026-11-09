@@ -110,10 +110,13 @@ def parse_card(card, pulled_at=None):
             "going": going, "rail": race.get("railPosition"),
             "prize_money": _float(race.get("totalPrizeMoney")),
             "field_size": _int(race.get("numRunners")), "jump_time": _utc_iso(race.get("date")),
-            "race_time_ms": None, "betfair_market_id": betfair,
+            "race_time_ms": _int((race.get("officialTiming") or {}).get("timeInMillis")), "betfair_market_id": betfair,
             "tab_meeting": int(bool(race.get("tabMeeting"))), "updated_at": pulled_at,
         })
 
+        starters = sum(1 for e in race.get("entries") or [] if not e.get("scratched")) or None
+        win_margin = next((_float((e.get("horseResult") or {}).get("margin")) for e in race.get("entries") or []
+                           if _int((e.get("horseResult") or {}).get("finishPosition")) == 2), None)
         for e in race.get("entries") or []:
             horse = e.get("horse") or {}
             name = horse.get("name")
@@ -153,6 +156,22 @@ def parse_card(card, pulled_at=None):
                 })
             for ev in e.get("pastEvents") or []:
                 _past_event(out, ev, name, pulled_at)
+            hr = e.get("horseResult") or {}
+            pos = _int(hr.get("finishPosition"))
+            if pos and not e.get("scratched"):
+                # Today's result, straight off the card (past runs only get it
+                # later, with the rating and stewards report).
+                m = _float(hr.get("margin"))
+                out["runs"].append({
+                    "race_id": race_id, "horse_name": name, "runner_number": _int(hr.get("number")),
+                    "barrier": _int(hr.get("barrier")), "weight": _float(hr.get("weight")),
+                    "jockey": hr.get("jockey"), "finish_pos": pos,
+                    "margin": (win_margin if pos == 1 else (-abs(m) if m is not None else None)),
+                    "field_size": starters, "sp": _float(hr.get("startingPrice")),
+                    "bsp": _float(hr.get("betfairStartingPrice")),
+                    "race_in_prep": _int(e.get("raceInPrep")), "days_since_prev": _int(e.get("daysSinceLastRace")),
+                    "source": "result", "updated_at": pulled_at,
+                })
 
     for table in out:
         out[table] = _dedupe(table, out[table])
