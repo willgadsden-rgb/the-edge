@@ -15,8 +15,9 @@ Usage
     python harvest.py --file card.json     # load a saved card (0 credits)
     python harvest.py --dry-run            # list what would be pulled; no fetch
 
-Credits: 1 for the upcoming list + 5 per meeting. HARVEST_MAX_MEETINGS (env)
-caps meetings per run. Run it twice on race days: morning (cards, odds) and
+Credits: 1 for the upcoming list + 5 per meeting. Only Victorian meetings are
+pulled (HARVEST_STATES, default "VIC"; "ALL" for every state). HARVEST_MAX_MEETINGS
+(env) caps meetings per run. Run it twice on race days: morning (cards, odds) and
 after the last race (results land in the runners' past runs).
 """
 
@@ -248,9 +249,35 @@ def store_card(db, card, pulled_at=None, ref=None, keep_raw=True):
 
 
 # --- fetch -------------------------------------------------------------------
-def meetings_for(date_iso, upcoming):
-    """Upcoming meetings on a Melbourne date, TAB listing first, one per track."""
-    seen, out = set(), []
+# Victorian thoroughbred tracks, for meetings whose listing has no state field.
+# Matched on the start of the track name, so "Pakenham Synthetic" or
+# "Sandown-Hillside" match too. A listed state always wins over this list.
+VIC_TRACKS = (
+    "flemington", "caulfield", "moonee valley", "the valley", "sandown", "cranbourne",
+    "pakenham", "mornington", "geelong", "ballarat", "bendigo", "kilmore", "seymour",
+    "sale", "moe", "traralgon", "warrnambool", "hamilton", "stawell", "horsham", "ararat",
+    "swan hill", "echuca", "wangaratta", "wodonga", "benalla", "kyneton", "donald",
+    "bairnsdale", "werribee", "tatura", "yarra valley", "yarra glen", "mildura", "colac",
+    "camperdown", "casterton", "coleraine", "penshurst", "terang", "dunkeld",
+    "great western", "avoca", "murtoa", "nhill", "st arnaud", "burrumbeet", "edenhope",
+    "balnarring", "woolamai", "hanging rock", "towong", "swifts creek", "stony creek",
+    "alexandra", "mansfield", "wycheproof", "ouyen", "kerang", "manangatang", "healesville",
+)
+
+
+def meeting_state(m):
+    """State of an upcoming meeting: its listed state, else VIC by track name."""
+    state = (m.get("state") or "").strip().upper()
+    if state:
+        return state
+    name = (m.get("trackName") or m.get("venueName") or m.get("id") or "").strip().lower()
+    return "VIC" if any(name.startswith(t) for t in VIC_TRACKS) else None
+
+
+def meetings_for(date_iso, upcoming, states=("VIC",)):
+    """Upcoming meetings on a Melbourne date in the given states (None = all),
+    one listing per track, TAB listing first. Returns (kept, skipped_names)."""
+    seen, out, skipped = set(), [], []
     for m in sorted(upcoming, key=lambda m: (not m.get("tabMeeting", False), m.get("id") or "")):
         if _melb_date(m.get("date")) != date_iso or not m.get("id"):
             continue
@@ -258,8 +285,11 @@ def meetings_for(date_iso, upcoming):
         if key in seen:
             continue
         seen.add(key)
+        if states and meeting_state(m) not in states:
+            skipped.append(m.get("trackName") or m["id"])
+            continue
         out.append(m)
-    return out
+    return out, skipped
 
 
 def main(argv=None):
@@ -293,7 +323,11 @@ def main(argv=None):
     upcoming = fk._get(session, fk._UPCOMING_PATH)
     if isinstance(upcoming, dict):
         upcoming = upcoming.get("meetings", [])
-    todays = meetings_for(date_iso, upcoming)
+    states_cfg = (fk._cfg("HARVEST_STATES", "VIC") or "VIC").strip().upper()
+    states = None if states_cfg == "ALL" else tuple(x.strip() for x in states_cfg.split(","))
+    todays, skipped = meetings_for(date_iso, upcoming, states)
+    if skipped:
+        print("Not pulled (outside {}): {}".format(states_cfg, ", ".join(skipped)))
     cap = args.max if args.max is not None else int(fk._cfg("HARVEST_MAX_MEETINGS", 0) or 0)
     if cap > 0:
         todays = todays[:cap]
@@ -309,6 +343,9 @@ def main(argv=None):
         try:
             card = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=m["id"]))
             print(m.get("trackName"), store_card(db, card, ref=m["id"]))
+            if states and (card.get("state") or "").upper() not in states:
+                print("NOTE: {} is in {} - add it to the skip rules".format(
+                    m.get("trackName"), card.get("state")))
         except Exception as exc:          # one bad meeting never stops the rest
             failed += 1
             db.conn.rollback()
