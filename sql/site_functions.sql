@@ -84,13 +84,19 @@ CREATE OR REPLACE FUNCTION public.edge_track_stats(p_track text, p_dmin integer,
                                                    p_going text DEFAULT NULL, p_rail text DEFAULT NULL)
 RETURNS TABLE (dim text, bucket text, sort_key integer, races bigint, wins bigint, expected numeric, iv numeric)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
-  WITH w AS (
-    SELECT LEAST(r.barrier, COALESCE(r.field_size, ra.field_size)) AS b,
-           COALESCE(r.field_size, ra.field_size) AS n, r.settle_pos AS s, ra.rail
+  WITH fs AS (
+    -- Field size when the winner's own row lacks it: another runner's record of
+    -- the same race, else the widest barrier we saw in it.
+    SELECT r.race_id, max(r.field_size) AS fs, max(r.barrier) AS bar
     FROM edge.runs r JOIN edge.races ra USING (race_id)
+    WHERE lower(ra.track) = lower(p_track) AND ra.distance BETWEEN p_dmin AND p_dmax
+    GROUP BY r.race_id
+  ), w0 AS (
+    SELECT r.barrier, COALESCE(r.field_size, ra.field_size, fs.fs, fs.bar) AS n, r.settle_pos AS s, ra.rail
+    FROM edge.runs r JOIN edge.races ra USING (race_id) JOIN fs USING (race_id)
     WHERE r.finish_pos = 1 AND lower(ra.track) = lower(p_track)
       AND ra.distance BETWEEN p_dmin AND p_dmax
-      AND r.barrier IS NOT NULL AND r.barrier > 0 AND COALESCE(r.field_size, ra.field_size) >= 5
+      AND r.barrier IS NOT NULL AND r.barrier > 0
       AND (p_going IS NULL
            OR (p_going = 'Good' AND ra.going ~* '^(good|firm|dead|fast)')
            OR (p_going = 'Soft' AND ra.going ~* '^(soft|slow)')
@@ -99,6 +105,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
       AND (p_rail IS NULL
            OR (p_rail = 'True' AND ra.rail ~* '^true')
            OR (p_rail = 'Out' AND ra.rail IS NOT NULL AND ra.rail !~* '^true'))
+  ), w AS (
+    SELECT LEAST(barrier, n) AS b, n, s, rail FROM w0 WHERE n >= 5
   ), z AS (
     SELECT *, CASE WHEN s = 1 THEN 1 WHEN s <= 3 THEN 2 WHEN s <= ceil(n * 0.6) THEN 3 ELSE 4 END AS zone,
            GREATEST(ceil(n * 0.6)::int, 3) AS mid_hi
