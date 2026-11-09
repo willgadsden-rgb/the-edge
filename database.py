@@ -20,8 +20,15 @@ def get_connection():
     Rows are returned as sqlite3.Row so callers can access columns by name,
     and foreign-key enforcement is turned on for referential integrity.
     """
-    conn = sqlite3.connect(str(DB_PATH))
+    # Several app sessions share this file: wait for a writer instead of
+    # failing with "database is locked", and use WAL so reads never block.
+    conn = sqlite3.connect(str(DB_PATH), timeout=60)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 60000")
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        pass                      # another connection is mid-switch; harmless
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -292,8 +299,11 @@ def init_db(reset: bool = False):
     When reset is True the existing racing.db file is removed first so the
     schema is rebuilt from scratch (useful while iterating in Phase 1).
     """
-    if reset and DB_PATH.exists():
-        DB_PATH.unlink()
+    if reset:
+        for p in (DB_PATH, DB_PATH.with_name(DB_PATH.name + "-wal"),
+                  DB_PATH.with_name(DB_PATH.name + "-shm")):
+            if p.exists():
+                p.unlink()
 
     conn = get_connection()
     try:

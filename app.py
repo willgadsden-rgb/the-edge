@@ -15,6 +15,7 @@ import datetime
 import io
 import json
 import math
+import threading
 from zoneinfo import ZoneInfo
 
 # All race timing is anchored to the Australian racing clock.
@@ -358,10 +359,20 @@ def race_tempo(entries, race):
     return speedmap_engine.classify_tempo(n_leaders, race["pace_pressure_index"])
 
 
+@st.cache_resource
+def _rebuild_lock():
+    """One lock for the whole app process: only one session rebuilds the card
+    at a time (two at once used to collide on racing.db and spend credits twice)."""
+    return threading.Lock()
+
+
 def ensure_data(force=False):
     if force or not _has_data():
         try:
-            rebuild_data()
+            with _rebuild_lock():
+                # Another session may have finished a rebuild while we waited.
+                if force or not _has_data():
+                    rebuild_data()
         except Exception as exc:
             # Strict live-only: no mock fallback. Surface the feed error and halt
             # rather than render fabricated runners.
@@ -2116,7 +2127,8 @@ with st.sidebar:
     if st.button("🔄 Rebuild live card", use_container_width=True,
                  help="Re-fetch the current card from the live Form King feed and re-price it."):
         try:
-            rebuild_data()
+            with _rebuild_lock():
+                rebuild_data()
             for k in [k for k in st.session_state if str(k).startswith(("scr_", "adj_"))]:
                 del st.session_state[k]
             st.rerun()
