@@ -73,13 +73,17 @@ def ingest_meeting(data, conn):
                 """
                 INSERT INTO race_entries
                     (race_id, horse_name, barrier, weight, prep_run_num, wfa_rating, market_odds,
-                     career_starts, last5_json, apprentice_claim, sire, firm_or_drift, flucs_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     career_starts, last5_json, apprentice_claim, sire, firm_or_drift, flucs_json,
+                     runs_json, fk_json, saddlecloth)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (race_id, entry["horse_name"], entry["barrier"], entry["weight"],
                  entry["prep_run_num"], entry["wfa_rating"], entry["market_odds"], cs, last5_json,
                  entry.get("apprentice_claim"), entry.get("sire"),
-                 entry.get("firm_or_drift"), flucs_json),
+                 entry.get("firm_or_drift"), flucs_json,
+                 json.dumps(entry.get("runs_all") or []),
+                 json.dumps(entry.get("fk_profile") or {}),
+                 entry.get("saddlecloth")),
             )
             entry_count += 1
 

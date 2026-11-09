@@ -1,16 +1,12 @@
 """Rating engine for the Punting Intelligence Engine (PIE) - Phase 2.
 
-Turns a runner's raw inputs into an absolute 0-100 ability score and a
-synthetic recent-form trajectory. Mock data only (see CLAUDE.md).
+Turns a runner's real Form King inputs into an absolute 0-100 ability score.
 
 Calibration anchors (CLAUDE.md "Math & Pricing Rules"):
     Provincial Benchmark 64        -> ~50.0
     Metro Saturday BM78 / Open     -> ~70.0
     Stakes / Group company         -> 85.0 - 100.0
 """
-
-import hashlib
-import random
 
 # Standard class weight used as the zero point for the weight penalty/bonus.
 CLASS_STANDARD_WEIGHT = 57.0
@@ -155,34 +151,6 @@ def calculate_0_to_100_score(wfa_rating, weight, distance, class_name,
     return round(_clamp(score), 1)
 
 
-def _seed_from_name(horse_name):
-    """Stable per-horse seed so trajectories are reproducible across runs."""
-    digest = hashlib.md5(horse_name.encode("utf-8")).hexdigest()
-    return int(digest, 16) % (2 ** 32)
-
-
-def generate_trajectory(horse_name, current_score, n=None):
-    """Return a synthetic list of the horse's last 3-5 scores (oldest -> newest).
-
-    The newest value sits near current_score and the series carries a mild,
-    horse-specific trend plus run-to-run noise, all clamped to 0-100. Pass n to
-    force an exact number of past runs (e.g. n=5 for the form-guide cards);
-    leaving it None keeps the original random 3-5 behaviour.
-    """
-    rng = random.Random(_seed_from_name(horse_name))
-    n_runs = n if n is not None else rng.randint(3, 5)
-    trend_per_run = rng.uniform(-3.0, 3.0)
-
-    trajectory = []
-    for i in range(n_runs):
-        # i counts from oldest (0) to newest (n_runs-1); newest ~ current_score.
-        steps_back = (n_runs - 1) - i
-        noise = rng.uniform(-2.0, 2.0)
-        value = current_score - trend_per_run * steps_back + noise
-        trajectory.append(round(_clamp(value), 1))
-    return trajectory
-
-
 def trajectory_trend(trajectory):
     """Least-squares slope of a trajectory, in points per run (rounded 1 dp)."""
     n = len(trajectory)
@@ -231,20 +199,6 @@ def classify_trajectory(form_newest_first):
     return {"label": "STABLE", "per_run": 0.0, "cls": "flat"}
 
 
-def condition_affinity(horse_name, condition):
-    """Deterministic per-horse affinity for a track condition, in [-4.0, +4.0]."""
-    digest = hashlib.md5("{}:{}".format(horse_name, condition).encode("utf-8")).hexdigest()
-    return round((int(digest, 16) % 81) / 10.0 - 4.0, 1)
-
-
-def distance_affinity(horse_name, distance):
-    """Deterministic per-horse affinity for today's distance, in [-3.0, +3.0]."""
-    if not distance:
-        return 0.0
-    digest = hashlib.md5("{}:{}".format(horse_name, distance).encode("utf-8")).hexdigest()
-    return round((int(digest, 16) % 61) / 10.0 - 3.0, 1)
-
-
 # Syndicate guardrail: no combination of situational modifiers may move a horse by
 # more than +/- 2.5 rating points (~1.7 lengths) from its established ability.
 MODIFIER_CAP = 2.5
@@ -257,39 +211,28 @@ def clamp_modifier(points):
 
 def calculate_projected_score(horse_name, base_score, prep_run_num, condition,
                               distance=None, situational_points=0.0,
-                              manual_override_points=0.0, unclamped_points=0.0):
-    """Project today's 0-100 score with a hard cap on situational modifiers:
+                              manual_override_points=0.0, unclamped_points=0.0,
+                              prep_adjustment=0.0, condition_points=0.0, distance_points=0.0):
+    """Project today's 0-100 score from REAL inputs only:
 
-        Projected = Base Rating + clamped_modifier + user_points + manual_override
+        Projected = base_score + prep + condition + distance
+                    + clamped situational + user rules + manual override
 
-    - Base Rating: established ability = recent-form-adjusted class rating + prep,
-      condition and distance suitability (intrinsic, never clamped);
-    - clamped_modifier: the consolidated situational points (angles, pace tempo,
-      wind vectors, track bias, intraday TSV drift) clamped to [-2.5, +2.5];
-    - user_points: deliberate custom-rule biases (user intent, not clamped);
-    - manual_override: analyst / AI co-pilot manual adjustment.
+    - base_score: recency-weighted ability from the runner's actual Form King runs;
+    - prep / condition / distance: suitability adjustments computed from the
+      horse's real history by the caller (0.0 until fitted against results -
+      nothing here is seeded from the horse's name);
+    - situational points (angles, pace, bias, wind, intraday) clamped to +/-2.5;
+    - user_points: deliberate custom-rule biases (not clamped);
+    - manual_override: analyst adjustment (not clamped, logged by the caller).
     """
-    from prep_engine import profile_runner  # local import avoids an import cycle
-
-    traj = generate_trajectory(horse_name, base_score, n=5)
-    trend = trajectory_trend(traj)
-    next_form = _clamp(traj[-1] + trend)
-    recent = sum(traj[-3:]) / len(traj[-3:])
-    form_blend = 0.5 * next_form + 0.5 * recent
-
-    base_rating = (0.7 * form_blend + 0.3 * base_score
-                   + profile_runner(horse_name, prep_run_num, base_score)["prep_adjustment"]
-                   + condition_affinity(horse_name, condition)
-                   + distance_affinity(horse_name, distance))
-
-    clamped = clamp_modifier(situational_points)
-    projected = (base_rating + clamped + float(unclamped_points)
-                 + float(manual_override_points))
+    projected = (float(base_score) + float(prep_adjustment) + float(condition_points)
+                 + float(distance_points) + clamp_modifier(situational_points)
+                 + float(unclamped_points) + float(manual_override_points))
     return round(_clamp(projected), 1)
 
 
 if __name__ == "__main__":
     demo = calculate_0_to_100_score(wfa_rating=74.0, weight=56.0,
                                     distance=1600, class_name="Open Benchmark 84")
-    traj = generate_trajectory("Demo Horse", demo)
-    print(f"score={demo}  trajectory={traj}  trend={trajectory_trend(traj)}/run")
+    print(f"score={demo}")

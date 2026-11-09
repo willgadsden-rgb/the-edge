@@ -1,7 +1,7 @@
 """Full system integrity audit for The Edge.
 
-Rebuilds a clean mock card + settled ledger, then runs a diagnostic across every
-module and prints a PASS/FAIL report. Mock data only (see CLAUDE.md).
+Rebuilds a clean live card + ledger, then runs a diagnostic across every module
+and prints a PASS/FAIL report. Needs a Form King key (strict live-only).
 
 Usage:  python system_audit.py
 """
@@ -86,13 +86,20 @@ def chk_fair_book():
 
 
 def chk_prep_peak():
-    # Deterministic: Desert Mirage is a genuine 3rd-up target peak in the mock field.
-    p = profile_runner("Desert Mirage", 3, 42.0)
+    # Real-runs prep profile: two preps where the horse rated best 3rd-up.
+    runs = [{"prep": 1, "pos": 5, "rating": 60.0}, {"prep": 2, "pos": 2, "rating": 64.0},
+            {"prep": 3, "pos": 1, "rating": 68.0}, {"prep": 1, "pos": 4, "rating": 61.0},
+            {"prep": 2, "pos": 3, "rating": 63.0}, {"prep": 3, "pos": 1, "rating": 69.0}]
+    p = profile_runner("Test Horse", 3, 65.0, runs)
+    q = profile_runner("Test Horse", 2, 65.0, runs)
+    none = profile_runner("Debutant", 1, 60.0, [])
     keys_ok = all(k in p for k in ("is_peak_target", "prep_adjustment", "tag", "stage_scores"))
-    bounded = -6.0 <= p["prep_adjustment"] <= 6.0
-    return (keys_ok and bounded and p["is_peak_target"],
-            "peak_target={} adj={:+.2f} tag={}".format(
-                p["is_peak_target"], p["prep_adjustment"], p["tag"]))
+    ok = (keys_ok and p["is_peak_target"] and not q["is_peak_target"]
+          and not none["is_peak_target"] and p["prep_adjustment"] == 0.0
+          and p["stages"][3]["wins"] == 2 and p["stage_scores"][3] == 68.5)
+    return (ok, "3rd-up best stage={} (avg {}), 2nd-up={}, debutant={}, adj={:+.1f}".format(
+        p["is_peak_target"], p["stage_scores"][3], q["is_peak_target"],
+        none["is_peak_target"], p["prep_adjustment"]))
 
 
 def chk_scratch_renorm():
@@ -140,7 +147,9 @@ def chk_clv_pnl():
             "SELECT stake_dollars, profit_units, clv_percent, taken_price, bsp, result "
             "FROM bets_ledger WHERE result IN ('WIN','LOSS')").fetchall()
         if not rows:
-            return (False, "no graded bets to audit")
+            # Bets are graded only from official results (no simulation), so a
+            # fresh card legitimately has none; CLV maths is covered in settlement.
+            return (True, "no graded bets yet (graded only from official results)")
         # Recompute CLV for one row and compare to the stored value.
         r = rows[0]
         recomputed = round(((r["taken_price"] / r["bsp"]) - 1.0) * 100.0, 2)
@@ -184,21 +193,23 @@ def chk_benchmark_par():
 def chk_projected_score():
     proj = calculate_projected_score("Desert Mirage", 42.0, 3, "Good")
     ok = isinstance(proj, float) and 0.0 <= proj <= 100.0
-    return (ok, "projected score = {} (0-100, blends form+prep+condition)".format(proj))
+    same = calculate_projected_score("Another Name", 42.0, 3, "Good")
+    ok = ok and proj == same == 42.0   # no input is derived from the horse's name
+    return (ok, "projected score = {} (real inputs only; name-independent)".format(proj))
 
 
 def chk_live_market():
     conn = get_connection()
     try:
         lme.seed_if_empty(conn)
-        before = conn.execute("SELECT COUNT(*) FROM market_flucs").fetchone()[0]
-        lme.simulate_tick(conn, seed=1)
         after = conn.execute("SELECT COUNT(*) FROM market_flucs").fetchone()[0]
-        eid = conn.execute("SELECT entry_id FROM race_entries WHERE scratched=0 LIMIT 1").fetchone()[0]
-        summ = lme.market_summary(conn, eid)
-        ok = (after > before and summ is not None
+        row = conn.execute("SELECT entry_id, market_odds FROM race_entries "
+                           "WHERE scratched=0 AND market_odds IS NOT NULL LIMIT 1").fetchone()
+        summ = lme.market_summary(conn, row["entry_id"])
+        ok = (after > 0 and summ is not None and abs(summ["current"] - row["market_odds"]) < 1e-9
+              and not hasattr(lme, "simulate_tick")
               and all(k in summ for k in ("opening", "current", "fluc_string", "sentiment_label")))
-        return (ok, "{} flucs after a tick; sample sentiment '{}'".format(
+        return (ok, "{} real flucs; current = Form King price; sentiment '{}'".format(
             after, summ["sentiment_label"] if summ else "n/a"))
     finally:
         conn.close()
@@ -418,12 +429,12 @@ def chk_settlement():
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE user_bets (bet_id INTEGER PRIMARY KEY AUTOINCREMENT, race_id TEXT, "
                  "horse_name TEXT, stake REAL, odds_taken REAL, status TEXT DEFAULT 'PENDING', "
-                 "payout REAL DEFAULT 0, net_pnl REAL DEFAULT 0, bsp_settled REAL)")
+                 "payout REAL DEFAULT 0, net_pnl REAL DEFAULT 0, bsp_settled REAL, clv_percent REAL)")
     conn.execute("CREATE TABLE race_entries (race_id INTEGER, horse_name TEXT, finish_pos INTEGER, "
                  "scratched INTEGER DEFAULT 0, result_bsp REAL)")
     for h, st, od in [("Winner", 10, 4.0), ("Loser", 10, 6.0), ("Scratchy", 10, 3.0)]:
         conn.execute("INSERT INTO user_bets (race_id,horse_name,stake,odds_taken) VALUES ('1',?,?,?)", (h, st, od))
-    conn.execute("INSERT INTO race_entries VALUES (1,'Winner',1,0,NULL)")
+    conn.execute("INSERT INTO race_entries VALUES (1,'Winner',1,0,5.0)")
     conn.execute("INSERT INTO race_entries VALUES (1,'Loser',5,0,NULL)")
     conn.execute("INSERT INTO race_entries VALUES (1,'Scratchy',NULL,1,NULL)")
     conn.commit()
@@ -431,9 +442,11 @@ def chk_settlement():
     rows = {r["horse_name"]: r for r in conn.execute("SELECT * FROM user_bets").fetchall()}
     ok = (rows["Winner"]["status"] == "WON" and abs(rows["Winner"]["net_pnl"] - 30.0) < 1e-6
           and rows["Loser"]["status"] == "LOST" and abs(rows["Loser"]["net_pnl"] + 10.0) < 1e-6
-          and rows["Scratchy"]["status"] == "SCRATCHED" and abs(rows["Scratchy"]["net_pnl"]) < 1e-6)
-    return ok, "WON +{:.0f}, LOST {:.0f}, SCR {:.0f}".format(
-        rows["Winner"]["net_pnl"], rows["Loser"]["net_pnl"], rows["Scratchy"]["net_pnl"])
+          and rows["Scratchy"]["status"] == "SCRATCHED" and abs(rows["Scratchy"]["net_pnl"]) < 1e-6
+          and rows["Winner"]["clv_percent"] == -20.0)      # took $4.00, BSP $5.00
+    return ok, "WON +{:.0f}, LOST {:.0f}, SCR {:.0f}, CLV {:+.1f}%".format(
+        rows["Winner"]["net_pnl"], rows["Loser"]["net_pnl"], rows["Scratchy"]["net_pnl"],
+        rows["Winner"]["clv_percent"] or 0.0)
 
 
 def chk_devig():
@@ -576,14 +589,26 @@ def chk_intraday_live_only():
     return True, "no mock; CLV +19.0% on 5.0/4.2; confidence 2→0.35, 3→0.65"
 
 
+def chk_no_fabrication():
+    """No module that feeds the card may seed numbers from a horse's name."""
+    import pathlib
+    offenders = []
+    for mod in ("rating_engine", "prep_engine", "angle_engine", "career_profiles",
+                "speedmap_engine", "live_market_engine", "exotics_engine", "ledger_tracker", "app"):
+        src = pathlib.Path(__file__).with_name(mod + ".py").read_text()
+        if "random." in src or "hashlib.md5" in src:
+            offenders.append(mod)
+    return (not offenders, "clean" if not offenders else "seeded/random code in: " + ", ".join(offenders))
+
+
 def main():
     print("Rebuilding a clean LIVE card + ledger for the audit (needs a Form King key)...")
     with contextlib.redirect_stdout(io.StringIO()):
         ingest.main()
         run_model.main()
         ledger_tracker.log_recommended_bets()
-        ledger_tracker.simulate_results_and_clv(seed=24)
 
+    check("No name-seeded or random inputs", chk_no_fabrication)
     check("SQLite schema consistency", chk_schema)
     check("100% fair pricing normalization", chk_fair_book)
     check("Prep peak detection & adjustment", chk_prep_peak)

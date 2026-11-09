@@ -1,121 +1,109 @@
-"""Campaign / preparation profiler for PIE - Phase 2.
+"""Campaign / preparation profiler (v2: real data only).
 
-Evaluates where a runner is in its campaign (prep_run_num), builds a synthetic
-per-stage form curve, detects "target peak" runs, and returns a prep adjustment
-factor to apply to today's rating. Mock data only (see CLAUDE.md).
+Builds a runner's record at each stage of a preparation (1st-up, 2nd-up, ...)
+from its ACTUAL past runs. Form King supplies `raceInPrep` on every past run,
+so each run is placed in its stage directly - no spell guessing and nothing
+seeded from the horse's name.
 
-Stages map from prep_run_num:
+The prep adjustment to today's rating is 0.0 until it is fitted against
+results (see the v2 blueprint): the profile is shown to the analyst as
+evidence, not silently added to the score.
+
+Stages map from prep run number:
     1 -> 1st-up, 2 -> 2nd-up, 3 -> 3rd-up, 4 -> 4th-up, 5+ -> 5th+ up
 """
 
-import hashlib
-import random
-
 STAGE_LABELS = {1: "1st-up", 2: "2nd-up", 3: "3rd-up", 4: "4th-up", 5: "5th+ up"}
 
-# A run is a "target peak" only if it is the horse's best stage AND that stage
-# sits at least this many points above the horse's early-prep (1st/2nd-up) form.
-PEAK_THRESHOLD = 2.5
-
-# Clamp on how much the prep adjustment can swing today's rating, in points.
-PREP_ADJ_LIMIT = 6.0
+# A stage is the horse's "best stage" only with at least this many runs there
+# and an average rating at least this far above the horse's overall average.
+MIN_STAGE_RUNS = 2
+BEST_STAGE_MARGIN = 1.0
 
 
 def _stage(prep_run_num):
-    """Collapse prep_run_num into a 1-5 stage key (5 means 5th-up or later)."""
-    return min(max(int(prep_run_num), 1), 5)
+    """Collapse a prep run number into a 1-5 stage key (5 = 5th-up or later)."""
+    try:
+        return min(max(int(prep_run_num), 1), 5)
+    except (TypeError, ValueError):
+        return 1
 
 
-def _seed_from_name(horse_name):
-    """Stable per-horse seed so prep curves are reproducible across runs."""
-    digest = hashlib.md5(("prep:" + horse_name).encode("utf-8")).hexdigest()
-    return int(digest, 16) % (2 ** 32)
+def stage_table(runs):
+    """Per-stage record from real runs: {stage: {starts, wins, places, avg_rating}}.
 
-
-def _build_curve(horse_name):
-    """Return per-stage point offsets (relative to the horse's par) for 1..5.
-
-    The curve peaks at a horse-specific stage and decays on either side, which
-    mimics a horse that needs a run or two to hit its best then tapers.
+    `runs` are dicts with "prep", "pos" and "rating" (Form King's per-run WFA
+    rating). Runs without a prep number are skipped.
     """
-    rng = random.Random(_seed_from_name(horse_name))
-    peak_stage = rng.choices([1, 2, 3, 4, 5], weights=[1, 3, 4, 3, 2])[0]
-    peak_value = rng.uniform(3.0, 6.0)
-    decay = rng.uniform(1.5, 3.0)
-
-    offsets = {}
-    for stage in range(1, 6):
-        offsets[stage] = round(peak_value - decay * abs(stage - peak_stage), 2)
-    return peak_stage, offsets
-
-
-def _stage_history(rng, stage, peak_stage):
-    """Synthesise realistic (starts, wins) for a horse at a given stage.
-
-    Strike rate is higher at/near the peak stage than in early conditioning runs.
-    """
-    starts = rng.randint(1, 6)
-    distance_from_peak = abs(stage - peak_stage)
-    base_strike = max(0.05, 0.32 - 0.07 * distance_from_peak)
-    wins = sum(1 for _ in range(starts) if rng.random() < base_strike)
-    return starts, wins
+    table = {s: {"starts": 0, "wins": 0, "places": 0, "ratings": []} for s in range(1, 6)}
+    for r in runs or []:
+        if not r.get("prep"):
+            continue
+        row = table[_stage(r["prep"])]
+        row["starts"] += 1
+        pos = r.get("pos")
+        if pos == 1:
+            row["wins"] += 1
+        if isinstance(pos, int) and pos <= 3:
+            row["places"] += 1
+        if isinstance(r.get("rating"), (int, float)):
+            row["ratings"].append(float(r["rating"]))
+    for row in table.values():
+        rs = row.pop("ratings")
+        row["avg_rating"] = round(sum(rs) / len(rs), 1) if rs else None
+    return table
 
 
-def profile_runner(horse_name, prep_run_num, base_score):
-    """Profile one runner's campaign and return its prep assessment.
+def profile_runner(horse_name, prep_run_num, base_score, runs=None):
+    """Profile one runner's campaign from its real runs.
 
-    Returns a dict:
-        prep_stage      - label, e.g. "3rd-up"
-        is_peak_target  - True if today is a significant target-peak run
-        prep_adjustment - points to add to today's rating (clamped)
-        tag             - display tag: PEAK TARGET / CONDITIONING / TAPERING
-        profile         - row for horse_prep_profiles (today's stage)
-        stage_scores    - synthetic avg_score at each stage (for inspection)
+    Returns:
+        prep_stage      - today's stage label, e.g. "3rd-up"
+        is_peak_target  - True when today's stage is the horse's proven best stage
+        prep_adjustment - 0.0 (shown as evidence; not added until fitted)
+        tag             - display tag, e.g. "[BEST STAGE 3RD-UP]" or ""
+        profile         - row for horse_prep_profiles (today's stage, real counts)
+        stage_scores    - {stage: average real rating or None}
+        stages          - full per-stage table (starts, wins, places, avg_rating)
     """
     today = _stage(prep_run_num)
-    peak_stage, offsets = _build_curve(horse_name)
-    rng = random.Random(_seed_from_name(horse_name) + 7)
+    table = stage_table(runs)
 
-    # Historical average score at each stage = par (base_score) + that offset.
-    stage_scores = {s: round(max(0.0, base_score + offsets[s]), 1) for s in range(1, 6)}
+    rated = [float(r["rating"]) for r in (runs or []) if isinstance(r.get("rating"), (int, float))]
+    overall = sum(rated) / len(rated) if rated else None
 
-    # Is today a genuine target peak? Best stage, meaningfully above early prep.
-    early_avg = (offsets[1] + offsets[2]) / 2.0
-    is_peak_target = (
-        today == peak_stage
-        and today >= 3
-        and (offsets[today] - early_avg) >= PEAK_THRESHOLD
-    )
+    best_stage = None
+    if overall is not None:
+        candidates = [(s, row["avg_rating"]) for s, row in table.items()
+                      if row["starts"] >= MIN_STAGE_RUNS and row["avg_rating"] is not None]
+        if candidates:
+            s, avg = max(candidates, key=lambda c: c[1])
+            if avg - overall >= BEST_STAGE_MARGIN:
+                best_stage = s
 
-    prep_adjustment = max(-PREP_ADJ_LIMIT, min(PREP_ADJ_LIMIT, offsets[today]))
+    is_peak_target = best_stage is not None and best_stage == today
+    tag = "[BEST STAGE {}]".format(STAGE_LABELS[today].upper()) if is_peak_target else ""
 
-    if is_peak_target:
-        tag = "[PEAK TARGET {}]".format(STAGE_LABELS[today].upper())
-    elif today < peak_stage:
-        tag = "[CONDITIONING]"
-    else:  # today > peak_stage (or an unremarkable peak)
-        tag = "[TAPERING]" if today > peak_stage else "[CONDITIONING]"
-
-    starts, wins = _stage_history(rng, today, peak_stage)
-    profile = {
-        "horse_name": horse_name,
-        "prep_stage": STAGE_LABELS[today],
-        "starts": starts,
-        "wins": wins,
-        "avg_score": stage_scores[today],
-    }
-
+    row = table[today]
     return {
         "prep_stage": STAGE_LABELS[today],
         "is_peak_target": is_peak_target,
-        "prep_adjustment": round(prep_adjustment, 2),
+        "prep_adjustment": 0.0,
         "tag": tag,
-        "profile": profile,
-        "stage_scores": stage_scores,
+        "profile": {
+            "horse_name": horse_name,
+            "prep_stage": STAGE_LABELS[today],
+            "starts": row["starts"],
+            "wins": row["wins"],
+            "avg_score": row["avg_rating"],
+        },
+        "stage_scores": {s: r["avg_rating"] for s, r in table.items()},
+        "stages": table,
     }
 
 
 if __name__ == "__main__":
-    result = profile_runner("Demo Horse", prep_run_num=3, base_score=70.0)
-    print(result["tag"], "adj", result["prep_adjustment"],
-          "stages", result["stage_scores"])
+    demo = [{"prep": 1, "pos": 5, "rating": 60.0}, {"prep": 2, "pos": 2, "rating": 64.0},
+            {"prep": 3, "pos": 1, "rating": 68.0}, {"prep": 1, "pos": 4, "rating": 61.0},
+            {"prep": 2, "pos": 3, "rating": 63.0}, {"prep": 3, "pos": 1, "rating": 69.0}]
+    print(profile_runner("Demo Horse", 3, 65.0, demo))

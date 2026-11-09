@@ -7,7 +7,6 @@ pos400m) via early_speed_from_runs; the name-hash figure is only a fallback for
 debutants with no in-run history (see CLAUDE.md, strict live-only).
 """
 
-import hashlib
 import json
 
 # Lateral lanes off the inside rail.
@@ -38,11 +37,9 @@ TAG_BLURB = {
 
 
 def early_speed_rating(horse_name):
-    """Deterministic early-speed figure on a 0-10 scale (fallback for debutants
-    with no in-run history — see early_speed_from_runs for the live read)."""
-    h = int(hashlib.md5(("es:" + horse_name).encode("utf-8")).hexdigest(), 16)
-    raw = 30.0 + (h % 651) / 10.0          # 30-95 (legacy internal scale)
-    return round((raw - 30.0) / 65.0 * 10.0, 1)
+    """Neutral early-speed figure (5.0 on the 0-10 scale) for a runner with no
+    in-run history, e.g. a debutant. No figure is derived from the name."""
+    return 5.0
 
 
 # Recency weights for the last-5 in-run positions (newest first).
@@ -280,8 +277,8 @@ def build_tactical_map(entries, geom=None):
     field = [e for e in entries if not e.get("scratched")]
     n = max(1, len(field))
     for e in field:
-        # Real early speed from the runner's in-run positions; the name-hash
-        # figure is only a fallback for debutants with no usable in-run data.
+        # Real early speed from the runner's in-run positions; a runner with no
+        # in-run data (a debutant) takes a neutral 5.0.
         es = early_speed_from_runs(_last5_of(e))
         e["_es10"] = es if es is not None else early_speed_rating(e["horse_name"])
         e["_es_live"] = es is not None

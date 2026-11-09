@@ -12,11 +12,9 @@ Mock data only (see CLAUDE.md). Launch with:  streamlit run app.py
 
 import contextlib
 import datetime
-import hashlib
 import io
 import json
 import math
-import random
 from zoneinfo import ZoneInfo
 
 # All race timing is anchored to the Australian racing clock.
@@ -57,9 +55,9 @@ from pricing_engine import (fair_book_from_scores, effective_odds, commission_fo
 DEFAULT_MARKET_WEIGHT = 0.70
 from staking_engine import (calculate_stake, calculate_mao, is_void, TARGET_PROFIT,
                             STAKE_CONSUMER, STAKE_SYNDICATE, DEFAULT_BANKROLL)
-from rating_engine import (calculate_0_to_100_score, generate_trajectory,
+from rating_engine import (calculate_0_to_100_score,
                            trajectory_trend, calculate_projected_score, classify_trajectory,
-                           condition_affinity, distance_affinity, clamp_modifier)
+                           clamp_modifier)
 from prep_engine import profile_runner
 
 OVERLAY_EDGE = 0.20
@@ -374,14 +372,6 @@ def ensure_data(force=False):
         conn.close()
 
 
-def do_market_tick():
-    conn = get_connection()
-    try:
-        lme.simulate_tick(conn)
-    finally:
-        conn.close()
-
-
 def load_meeting():
     conn = get_connection()
     try:
@@ -543,6 +533,15 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
         # feed the real past ratings/positions into the 3-layer rating engine so
         # the displayed score matches the form shown on the card.
         real_runs = _runs(e)
+        # Every past run on file (up to 12) and the real runner profile.
+        try:
+            all_runs = json.loads(_rowget(e, "runs_json") or "[]") or real_runs
+        except Exception:
+            all_runs = real_runs
+        try:
+            fk = json.loads(_rowget(e, "fk_json") or "{}")
+        except Exception:
+            fk = {}
         # Apprentice claim (#3): a claim lightens the carried weight, worth
         # +0.38 pts/kg through the base rating (never clamped as a situational).
         claim = _rowget(e, "apprentice_claim") or 0.0
@@ -552,7 +551,7 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
             last_ratings=[rr.get("rating") for rr in real_runs],   # newest first
             barrier=e["barrier"],
             last_positions=[rr.get("pos") for rr in real_runs])
-        prep = profile_runner(e["horse_name"], e["prep_run_num"], base)
+        prep = profile_runner(e["horse_name"], e["prep_run_num"], base, all_runs)
         pos = settling.get(e["horse_name"], 99)
         angles = angle_engine.calculate_angles(e, race, meeting, pos, track_bias)
         ap = angle_engine.angle_points(angles)
@@ -621,22 +620,24 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
         projected = calculate_projected_score(
             e["horse_name"], base, e["prep_run_num"], cond, race["distance"],
             situational_points=ap + env_pts, manual_override_points=manual,
-            unclamped_points=custom_pts)
+            unclamped_points=custom_pts, prep_adjustment=prep["prep_adjustment"])
         # The form pills and trend come from the real runs parsed above; a
         # debutant (0 starts) has none.
         is_debut = (e.get("career_starts") == 0)
         # Ratings oldest -> newest for the pills/trend (real_runs is newest first).
         traj = [rr["rating"] for rr in reversed(real_runs) if rr.get("rating") is not None]
-        hist = angle_engine.synth_history(e["horse_name"], race["distance"])
+        hist = angle_engine.real_history(e, race["distance"])
         computed[e["entry_id"]] = dict(
             base=base, pos=pos, angles=angles, ap=ap,
             custom_badges=custom_badges, env_badges=env_badges, triggers=triggers,
             manual=manual, projected=projected, traj=traj, is_debut=is_debut,
-            real_runs=real_runs,
+            real_runs=real_runs, runs_all=all_runs, fk=fk, prep_tag=prep["tag"],
             trend=(0.0 if (is_debut or not traj) else trajectory_trend(traj)), tactical=tac,
             form_delta=round(prep["prep_adjustment"], 1),
-            cond_delta=condition_affinity(e["horse_name"], cond),
-            dist_delta=distance_affinity(e["horse_name"], race["distance"]),
+            # Condition / distance suitability are not added to the score until
+            # they are fitted against results; the real records show in DETAILS.
+            cond_delta=0.0,
+            dist_delta=0.0,
             angles_clamped=clamp_modifier(ap + env_pts),
             dls=hist["days_since"], prep_run=e["prep_run_num"])
 
@@ -668,7 +669,8 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
                   "manual": c["manual"], "projected": c["projected"],
                   "par": par, "par_delta": round(c["projected"] - par, 1), "cond": cond,
                   "traj": c["traj"], "trend": c["trend"], "is_debut": c["is_debut"],
-                  "real_runs": c["real_runs"],
+                  "real_runs": c["real_runs"], "runs_all": c["runs_all"], "fk": c["fk"],
+                  "prep_tag": c["prep_tag"],
                   "lane": tac.get("lane"), "lane_name": tac.get("lane_name", "-"),
                   "settle_zone": tac.get("zone", "-"),
                   "tactical_tag": tac.get("tag", "-"), "tactical_blurb": tac.get("tag_blurb", "-"),
@@ -732,9 +734,11 @@ def rule_manager():
 # -----------------------------------------------------------------------------
 # Tab 2 helpers: expanded realistic speed map
 # -----------------------------------------------------------------------------
-def _early_speed(name):
-    h = int(hashlib.md5(("es:" + name).encode("utf-8")).hexdigest(), 16)
-    return 30.0 + (h % 651) / 10.0
+def _early_speed(entry):
+    """Early speed on the map's 30-95 scale from REAL in-run positions
+    (0-10 figure x 6.5 + 30); a runner with no in-run data sits at neutral."""
+    es10 = angle_engine.early_speed_of(entry)
+    return 30.0 + 6.5 * (es10 if es10 is not None else 5.0)
 
 
 LANE_W = 46.0          # vertical separation between lanes
@@ -863,8 +867,7 @@ def render_guide():
         ('BSP', "Betfair Starting Price", "The market's <b>closing</b> price, used to measure CLV."),
         ('ROI %', "Return on investment", "Profit as a percentage of everything staked."),
         ('🩹 Scratch', "Scratch toggle", "Mark a non-runner; the market instantly re-prices without it."),
-        ('📡 Simulate market tick', "Market tick", "Nudges the simulated live prices so you can watch them move (demo only)."),
-        ('🎲 Exotic Overlays', "Exotics", "Value Exacta/Trifecta combinations (pick the first 2 or 3 past the post)."),
+        ('🎲 Exotic fair dividends', "Exotics", "Fair Exacta/Trifecta dividends from the model (first 2 or 3 past the post)."),
     ])
 
     st.markdown("#### 📋 Form-guide chips (in the DETAILS drawer)")
@@ -884,7 +887,7 @@ def render_guide():
          "Intraday drift", "A track pattern detected from earlier races today (e.g. wide runners doing well)."),
     ])
 
-    st.caption("All data in this prototype is simulated locally — no real bets, odds or results. "
+    st.caption("All data comes from the live Form King feed. "
                "The icons and rules above are exactly what you'll see throughout the app.")
 
 
@@ -1293,7 +1296,7 @@ def build_speed_map(entries, cloth, geom, tmap=None, frame_ms=300):
     n = max(1, len(field))
     tmap = tmap or {}
     for e in field:
-        e["_es"] = _early_speed(e["horse_name"])
+        e["_es"] = _early_speed(e)
     order = sorted(field, key=lambda x: -x["_es"])
     rank_by = {e["horse_name"]: i for i, e in enumerate(order, start=1)}
     leaders = {e["horse_name"] for e in field if e["_es"] >= 70.0}
@@ -1488,7 +1491,6 @@ def build_speed_map(entries, cloth, geom, tmap=None, frame_ms=300):
 # Tab 1 helpers: runner cards + career drawer
 # -----------------------------------------------------------------------------
 _STAGE_WORD = {1: "1ST UP", 2: "2ND UP", 3: "3RD UP", 4: "4TH UP", 5: "5TH+ UP"}
-_STAGE_RUN = {1: "1st up", 2: "2nd up", 3: "3rd up", 4: "4th up", 5: "5th+ up"}
 
 
 def _ord(n):
@@ -1500,35 +1502,6 @@ def _ms_date(ms):
     if not ms:
         return "—"
     return datetime.datetime.utcfromtimestamp(ms / 1000).strftime("%d %b %y")
-
-
-def _last5_runs(name, trajectory, prep_run_num, distance):
-    """Deterministic per-run detail for the last 5 starts (newest first): rating,
-    finishing position, last-600m split, prep stage at that run, trip and going."""
-    newest = list(reversed(trajectory))
-    # Prep stage counting back from today's run number, with a spell break.
-    stages, p = [], int(prep_run_num)
-    prev_len = 4 + (int(hashlib.md5(name.encode("utf-8")).hexdigest(), 16) % 3)
-    for _ in range(len(newest)):
-        p -= 1
-        if p >= 1:
-            stages.append(_STAGE_RUN[min(p, 5)])
-        else:
-            stages.append("Spell")
-            p = prev_len
-    runs = []
-    for i, rating in enumerate(newest):
-        rng = random.Random(int(hashlib.md5("{}|{}".format(name, i).encode("utf-8")).hexdigest(), 16) % (2 ** 32))
-        base = max(1, round((78 - rating) / 8.0))        # better rating -> better finish
-        pos = max(1, min(12, base + rng.randint(-1, 3)))
-        runs.append({
-            "rating": rating, "pos": pos,
-            "last600": round(33.0 + rng.uniform(0.0, 3.9), 2),
-            "stage": stages[i],
-            "dist": max(1000, distance + rng.choice([-200, -100, 0, 0, 100, 200])),
-            "going": rng.choice(["Good", "Good", "Soft", "Heavy", "Soft"]),
-        })
-    return runs
 
 
 def _prep_markup(prep_run_num, tag):
@@ -1700,7 +1673,8 @@ def _style_current(df, col, value):
 
 def _render_career_drawer(r, race):
     profile = career_profiles.generate_profile(
-        r["horse_name"], race["distance"], r["prep_run_num"], r["base"])
+        r["horse_name"], race["distance"], r["prep_run_num"], r["base"],
+        fk=r.get("fk"), runs=r.get("runs_all"))
     bio, car = profile["bio"], profile["career"]
     cond_bucket = r["cond"]
 
@@ -1749,7 +1723,7 @@ def _render_career_drawer(r, race):
         for role, who, sr, roi in rows:
             name = (who + " · ") if who else ""
             out += ('<div class="rec-chip"><span class="rl">{role}</span>'
-                    '<span class="rv">{name}L50 SR {sr} · ROI {roi}</span></div>'.format(
+                    '<span class="rv">{name}12m SR {sr}</span></div>'.format(
                         role=role, name=name, sr=sr, roi=roi))
         return '<div class="chip-grid">' + out + "</div>"
 
@@ -1779,9 +1753,9 @@ def _render_career_drawer(r, race):
                         'BY SURFACE &amp; DISTANCE (Starts: W-2-3 · rating)</div>', unsafe_allow_html=True)
             st.markdown(_rates_chips(), unsafe_allow_html=True)
 
-            st.markdown('<div class="grid-hdr" title="Strike rate (SR) and return on investment (ROI) over the last '
-                        '50 rides for the jockey, trainer, and this jockey/trainer combination.">'
-                        'CONNECTIONS (last 50 rides · SR &amp; ROI)</div>', unsafe_allow_html=True)
+            st.markdown('<div class="grid-hdr" title="Form King 12-month win strike rate for the jockey and '
+                        'trainer, and the trainer/jockey combination.">'
+                        'CONNECTIONS (12-month strike rate, Form King)</div>', unsafe_allow_html=True)
             st.markdown(_conn_chips(), unsafe_allow_html=True)
 
             st.markdown('<div class="grid-hdr">FACTS</div>', unsafe_allow_html=True)
@@ -1875,7 +1849,7 @@ def render_worksheet(rows, race, cloth):
         "My Price": st.column_config.NumberColumn("My Price", format="$%.2f",
                                                   help="Fair odds from the model (100% book)."),
         "Live Market": st.column_config.NumberColumn("Live Market", format="$%.2f",
-                                                     help="Current simulated market price."),
+                                                     help="Current Form King market price (average across bookmakers)."),
         "Edge %": st.column_config.NumberColumn("Edge %", format="%+.1f%%",
                                                 help="How much more the market pays than our fair price. Positive = value."),
     }
@@ -2002,7 +1976,7 @@ def render_runner_card(r, race, cloth):
             ctrl.checkbox("🩹 Scratch", key=key)
             return
 
-        prep = profile_runner(r["horse_name"], r["prep_run_num"], r["base"])
+        prep = profile_runner(r["horse_name"], r["prep_run_num"], r["base"], r.get("runs_all"))
         proj_cls = "proj-up" if r["par_delta"] >= 0 else "proj-dn"
         left.markdown(
             '<img class="silk" src="{silk}" alt="silk" title="Jockey silks &amp; saddlecloth number — the colours the horse carries in the race."/>'
@@ -2047,7 +2021,7 @@ def render_runner_card(r, race, cloth):
         right.markdown(
             '<div class="price-wrap">'
             '<div class="tile tile-mine" title="MY PRICE — the fair odds the model rates this horse at, from a book that sums to 100%. Bet only when the market pays more than this."><div class="lbl">MY PRICE</div><div class="val">${:.2f}</div></div>'
-            '<div><div class="tile tile-mkt" title="LIVE MARKET — the current price on offer in the simulated market."><div class="lbl">LIVE MARKET</div><div class="val">${:.2f}</div></div>{}</div>'
+            '<div><div class="tile tile-mkt" title="LIVE MARKET — the current Form King price (average across bookmakers)."><div class="lbl">LIVE MARKET</div><div class="val">${:.2f}</div></div>{}</div>'
             '</div>{}'.format(r["disp_fair"], r["market"], badge, fluc_html),
             unsafe_allow_html=True)
 
@@ -2077,9 +2051,6 @@ ensure_data()
 with st.sidebar:
     st.markdown("## 🏇 {}".format(BRAND))
     st.caption("{} — live syndicate dashboard (Form King).".format(TAGLINE))
-    if st.button("📡 Simulate market tick", use_container_width=True, key="tick_side",
-                 help="Nudge the simulated live market — prices move and the steamer/drifter tags update."):
-        do_market_tick(); st.rerun()
     if st.button("🔄 Rebuild live card", use_container_width=True,
                  help="Re-fetch the current card from the live Form King feed and re-price it."):
         try:
@@ -2689,9 +2660,7 @@ def render_race_view():
                               help="Tell the model how the track is racing — e.g. favouring on-pace runners or "
                                    "wide barriers — and ratings tilt accordingly.") or BIAS_OPTIONS[0]
     with hb2:
-        if st.button("📡 Simulate tick", key="tick_tab1", use_container_width=True,
-                     help="Nudge the simulated live market for this race."):
-            do_market_tick(); st.rerun()
+        st.caption("Prices: Form King, as of the last rebuild.")
     track_bias = BIAS_MAP[bias_label]
 
     rows = evaluate_race(entries, scratched_names, race, meeting, race_markets(race_id),
@@ -2711,31 +2680,23 @@ def render_race_view():
     with main_col:
         _render_field(rows, race, race_id, cloth)
 
-    # High-Yield Exotic Overlays
-    with st.expander("🎲 High-Yield Exotic Overlays (Exacta & Trifecta, Edge ≥ +25%)"):
+    # Exotic fair dividends (no tote comparison: the feed has no tote pools)
+    with st.expander("🎲 Exotic fair dividends (Exacta & Trifecta)"):
         active_rows = [r for r in rows if not r["scratched"] and r["disp_fair"]]
         if len(active_rows) >= 3:
             probs = {r["entry_id"]: 1.0 / r["disp_fair"] for r in active_rows}
             tot = sum(probs.values())
             probs = {k: v / tot for k, v in probs.items()}
             names = {r["entry_id"]: r["horse_name"] for r in active_rows}
-            ex, tri = exotics_engine.top_exotics(probs, names, seed=race_id)
-            st.caption("Fair dividends from the 100% win model via the Harville method, compared "
-                       "to simulated TAB tote pools. Combinations paying ≥ 25% over fair are shown.")
-            if ex:
-                st.markdown("**Exacta overlays**")
-                st.dataframe(pd.DataFrame([{
-                    "Combination": " → ".join(e["combo"]), "Fair $": e["fair"],
-                    "Tote $": e["tote"], "Edge %": round(e["edge"] * 100, 0)} for e in ex]),
-                    use_container_width=True, hide_index=True)
-            if tri:
-                st.markdown("**Trifecta overlays**")
-                st.dataframe(pd.DataFrame([{
-                    "Combination": " → ".join(t["combo"]), "Fair $": t["fair"],
-                    "Tote $": t["tote"], "Edge %": round(t["edge"] * 100, 0)} for t in tri]),
-                    use_container_width=True, hide_index=True)
-            if not ex and not tri:
-                st.info("No exotic combinations currently clear the +25% value threshold.")
+            ex, tri = exotics_engine.fair_exotics(probs, names)
+            st.caption("Fair dividends from the 100% win model via the Harville method. Compare them "
+                       "to the live tote yourself: a combination paying well over fair is value.")
+            st.markdown("**Most likely exactas**")
+            st.dataframe(pd.DataFrame([{"Combination": " → ".join(e["combo"]), "Fair $": e["fair"]}
+                                       for e in ex]), use_container_width=True, hide_index=True)
+            st.markdown("**Most likely trifectas**")
+            st.dataframe(pd.DataFrame([{"Combination": " → ".join(t["combo"]), "Fair $": t["fair"]}
+                                       for t in tri]), use_container_width=True, hide_index=True)
         else:
             st.info("Need at least three active runners to price exotics.")
 
@@ -2863,9 +2824,6 @@ with tab3:
     st.markdown("### 🎯 Active / Pending Bets Today")
     st.caption("Qualified suggestions: Edge ≥ 15% (live ≥ MAO) · Projected within ±1.5 of Par · "
                "$2.20–$18.00 · trend > −1.0.")
-    if st.button("📡 Simulate market tick", key="tick_tab3",
-                 help="Nudge the simulated live market, then re-check which runners still qualify as bets."):
-        do_market_tick(); st.rerun()
 
     bias = current_bias()
     suggested = []
@@ -2890,7 +2848,7 @@ with tab3:
         st.dataframe(sug_df, use_container_width=True, hide_index=True)
         st.caption("{} qualified suggestion(s). Stakes sized to win ${:.0f}.".format(len(suggested), TARGET_PROFIT))
     else:
-        st.info("No runners currently qualify. Try a market tick or a track-bias setting.")
+        st.info("No runners currently qualify on the current prices. Try a track-bias setting, or Rebuild for fresh prices.")
 
     st.divider()
     st.markdown("### 📒 Settled Bets & Audit Ledger")
@@ -2930,7 +2888,7 @@ with tab3:
                    "Positive and consistent CLV is the key long-term edge signal. CLV beat rate {:.0f}%.".format(beat))
 
     st.dataframe(pd.DataFrame([dict(b) for b in bets]), use_container_width=True, hide_index=True)
-    st.caption("To-Win-$100 staking. Seeded weighted-finish results; "
+    st.caption("To-Win-$100 staking. Results come only from official Form King results; "
                "CLV beat rate = share of bets whose taken price beat the BSP.")
 
 

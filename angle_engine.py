@@ -1,16 +1,15 @@
 """Situational Angle Engine for The Edge (Phase 5).
 
 Scans runner history and current race conditions to produce dynamic +/- point
-modifiers ("angles") that feed the projected score. Runner history is synthesised
-deterministically per horse (mock data only, see CLAUDE.md). Each public check is
-a pure predicate so the angles can be unit-tested with explicit inputs; the
-`calculate_angles` entry point assembles them from a seeded synthetic history.
+modifiers ("angles") that feed the projected score. Runner history comes from the
+real Form King runs stored on each entry (runs_json / last5_json / fk_json). Each
+public check is a pure predicate so the angles can be unit-tested with explicit
+inputs; `calculate_angles` assembles them from the runner's real history.
 
 Each active angle is returned as:  {"name": str, "points": float, "type": "bonus"|"penalty"}
 """
 
-import hashlib
-import random
+import json
 
 # Point values per angle.
 PTS_DISTANCE_CONDITIONER = 2.0
@@ -25,40 +24,101 @@ TRACK_BIAS_LEADER = "Leader Bias"
 TRACK_BIAS_SWOOPER = "Swooper Bias"
 
 
-def _seed(horse_name):
-    return int(hashlib.md5(("angle:" + horse_name).encode("utf-8")).hexdigest(), 16) % (2 ** 32)
+def _json_list(raw):
+    if isinstance(raw, list):
+        return raw
+    try:
+        return json.loads(raw or "[]")
+    except Exception:
+        return []
 
 
-def _early_speed(name):
-    h = int(hashlib.md5(("es:" + name).encode("utf-8")).hexdigest(), 16)
-    return 30.0 + (h % 651) / 10.0
+def _get(entry, key):
+    """Read a key from a dict or a sqlite3.Row that may predate a migration."""
+    try:
+        return entry[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _runs_of(entry):
+    """All real past runs on file for an entry (newest first)."""
+    runs = _json_list(_get(entry, "runs_json"))
+    return runs or _json_list(_get(entry, "last5_json"))
+
+
+def early_speed_of(entry):
+    """Real early-speed figure (0-10) from in-run settling positions, or None."""
+    from speedmap_engine import early_speed_from_runs  # local: avoids an import cycle
+    return early_speed_from_runs(_json_list(_get(entry, "last5_json")) or _runs_of(entry))
 
 
 def settling_positions(entries):
-    """Map horse_name -> early settling position (1 = fastest/leader)."""
-    order = sorted((e for e in entries if not e.get("scratched")),
-                   key=lambda e: -_early_speed(e["horse_name"]))
+    """Map horse_name -> expected settling position (1 = leader) from REAL in-run
+    history. Runners with no in-run data (debutants) sit at a neutral 5.0 on the
+    0-10 scale rather than a made-up figure."""
+    active = [e for e in entries if not _get(e, "scratched")]
+    speed = {e["horse_name"]: early_speed_of(e) for e in active}
+    order = sorted(active, key=lambda e: -(speed[e["horse_name"]] if speed[e["horse_name"]] is not None else 5.0))
     return {e["horse_name"]: i for i, e in enumerate(order, start=1)}
 
 
-def synth_history(horse_name, today_distance):
-    """Deterministic mock recent-history snapshot used by the history-based angles."""
-    r = random.Random(_seed(horse_name))
-    last_distance = max(800, today_distance + r.choice([-400, -200, -100, 0, 100, 200]))
-    two_back_distance = max(800, last_distance + r.choice([-400, -200, 0, 200]))
-    last_condition = r.choice(["Good", "Good", "Soft", "Heavy", "Good"])
+def _going_parts(going):
+    """'Heavy 8' -> ('Heavy', 8); 'Good' -> ('Good', None)."""
+    parts = (going or "").split()
+    word = parts[0].capitalize() if parts else None
+    num = None
+    if len(parts) > 1:
+        try:
+            num = int(parts[1])
+        except ValueError:
+            num = None
+    return word, num
+
+
+def real_history(entry, today_distance):
+    """Recent-history snapshot for the angles, built from the runner's REAL runs.
+
+    Form King has no sectional times on race runs, so the late-sectional flags
+    are always False and the angles that need them do not fire.
+    """
+    runs = _runs_of(entry)
+    try:
+        fk = json.loads(_get(entry, "fk_json") or "{}")
+    except Exception:
+        fk = {}
+    last = runs[0] if runs else {}
+    two_back = runs[1] if len(runs) > 1 else {}
+    last_distance = last.get("dist") or today_distance
+    two_back_distance = two_back.get("dist") or last_distance
+    last_condition, last_severity = _going_parts(last.get("going"))
+
+    # Runs earlier in THIS prep: newest-first runs whose prep number counts down.
+    today_prep = _get(entry, "prep_run_num") or 1
+    this_prep = []
+    for i, r in enumerate(runs):
+        if r.get("prep") == today_prep - 1 - i and r.get("prep", 0) >= 1:
+            this_prep.append(r)
+        else:
+            break
+    at_trip = sum(1 for r in this_prep if r.get("dist") and abs(r["dist"] - today_distance) <= 100)
+
+    days_since = fk.get("days_since_run")
+    weight = _get(entry, "weight")
+    weight_drop = (last.get("wt") - float(weight)) if (last.get("wt") and weight) else 0.0
+
     return {
         "last_distance": last_distance,
         "two_back_distance": two_back_distance,
         "rose_two_back_m": last_distance - two_back_distance,
-        "days_since": r.choice([6, 8, 10, 13, 16, 20, 28, 35, 45]),
+        "days_since": days_since if days_since is not None else 999,
         "last_condition": last_condition,
-        "last_severity": r.choice([8, 9, 10]) if last_condition == "Heavy" else 0,
-        "runs_since_heavy": 0 if r.random() < 0.6 else 1,   # 0 = this is the first run back
-        "is_second_at_trip": r.random() < 0.45,
-        "late_sectional_above_avg": r.random() < 0.5,
-        "elite_late_sectional": r.random() < 0.35,
-        "weight_drop": round(r.choice([0, 0, 0.5, 1.0, 2.0, 3.0, 4.0]), 1),
+        "last_severity": last_severity or 0,
+        "runs_since_heavy": 0,          # last_condition is the immediately previous run
+        "is_second_at_trip": at_trip == 1,
+        "late_sectional_above_avg": False,   # no race sectionals in the Form King feed
+        "elite_late_sectional": False,
+        "weight_drop": round(weight_drop, 1),
     }
 
 
@@ -121,11 +181,11 @@ def check_speed_map_bias(settling_position, track_bias):
 
 
 def calculate_angles(entry, race, meeting, settling_position, track_bias):
-    """Assemble all active angles for one runner from its synthetic history."""
+    """Assemble all active angles for one runner from its real history."""
     today_distance = race["distance"]
     today_condition = (meeting["condition"] or "Good").split()[0]
     weight = entry["weight"]
-    hist = synth_history(entry["horse_name"], today_distance)
+    hist = real_history(entry, today_distance)
     stepping_up = today_distance > hist["last_distance"]
 
     candidates = [
