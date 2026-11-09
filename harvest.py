@@ -261,31 +261,6 @@ def store_card(db, card, pulled_at=None, ref=None, keep_raw=True):
 
 
 # --- fetch -------------------------------------------------------------------
-# Victorian thoroughbred tracks, for meetings whose listing has no state field.
-# Matched on the start of the track name, so "Pakenham Synthetic" or
-# "Sandown-Hillside" match too. A listed state always wins over this list.
-VIC_TRACKS = (
-    "flemington", "caulfield", "moonee valley", "the valley", "sandown", "cranbourne",
-    "pakenham", "mornington", "geelong", "ballarat", "bendigo", "kilmore", "seymour",
-    "sale", "moe", "traralgon", "warrnambool", "hamilton", "stawell", "horsham", "ararat",
-    "swan hill", "echuca", "wangaratta", "wodonga", "benalla", "kyneton", "donald",
-    "bairnsdale", "werribee", "tatura", "yarra valley", "yarra glen", "mildura", "colac",
-    "camperdown", "casterton", "coleraine", "penshurst", "terang", "dunkeld",
-    "great western", "avoca", "murtoa", "nhill", "st arnaud", "burrumbeet", "edenhope",
-    "balnarring", "woolamai", "hanging rock", "towong", "swifts creek", "stony creek",
-    "alexandra", "mansfield", "wycheproof", "ouyen", "kerang", "manangatang", "healesville",
-)
-
-
-def meeting_state(m):
-    """State of an upcoming meeting: its listed state, else VIC by track name."""
-    state = (m.get("state") or "").strip().upper()
-    if state:
-        return state
-    name = (m.get("trackName") or m.get("venueName") or m.get("id") or "").strip().lower()
-    return "VIC" if any(name.startswith(t) for t in VIC_TRACKS) else None
-
-
 def meetings_for(date_iso, upcoming, states=("VIC",)):
     """Upcoming meetings on a Melbourne date in the given states (None = all),
     one listing per track, TAB listing first. Returns (kept, skipped_names)."""
@@ -297,7 +272,7 @@ def meetings_for(date_iso, upcoming, states=("VIC",)):
         if key in seen:
             continue
         seen.add(key)
-        if states and meeting_state(m) not in states:
+        if states and fk.meeting_state(m) not in states:
             skipped.append(m.get("trackName") or m["id"])
             continue
         out.append(m)

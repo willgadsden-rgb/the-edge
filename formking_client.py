@@ -380,6 +380,37 @@ def _map_meeting(summary):
     return {"meeting": meeting, "races": races}
 
 
+# Victorian thoroughbred tracks, for meetings whose listing has no state field.
+# Matched on the start of the track name, so "Pakenham Synthetic" or
+# "Sandown-Hillside" match too. A listed state always wins over this list.
+VIC_TRACKS = (
+    "flemington", "caulfield", "moonee valley", "the valley", "sandown", "cranbourne",
+    "pakenham", "mornington", "geelong", "ballarat", "bendigo", "kilmore", "seymour",
+    "sale", "moe", "traralgon", "warrnambool", "hamilton", "stawell", "horsham", "ararat",
+    "swan hill", "echuca", "wangaratta", "wodonga", "benalla", "kyneton", "donald",
+    "bairnsdale", "werribee", "tatura", "yarra valley", "yarra glen", "mildura", "colac",
+    "camperdown", "casterton", "coleraine", "penshurst", "terang", "dunkeld",
+    "great western", "avoca", "murtoa", "nhill", "st arnaud", "burrumbeet", "edenhope",
+    "balnarring", "woolamai", "hanging rock", "towong", "swifts creek", "stony creek",
+    "alexandra", "mansfield", "wycheproof", "ouyen", "kerang", "manangatang", "healesville",
+)
+
+
+def meeting_state(m):
+    """State of an upcoming meeting: its listed state, else VIC by track name."""
+    state = (m.get("state") or "").strip().upper()
+    if state:
+        return state
+    name = (m.get("trackName") or m.get("venueName") or m.get("id") or "").strip().lower()
+    return "VIC" if any(name.startswith(t) for t in VIC_TRACKS) else None
+
+
+def allowed_states():
+    """States to load (FORMKING_STATES / HARVEST_STATES, default VIC); None = all."""
+    cfg = str(_cfg("FORMKING_STATES", _cfg("HARVEST_STATES", "VIC")) or "VIC").strip().upper()
+    return None if cfg == "ALL" else tuple(x.strip() for x in cfg.split(","))
+
+
 # --- public entry point ------------------------------------------------------
 def fetch_live_meetings(max_meetings=None):
     """Fetch the live card from Form King and return ingest-shaped meetings.
@@ -433,6 +464,12 @@ def fetch_live_meetings(max_meetings=None):
         seen_tracks.add(key)
         collapsed.append(m)
     upcoming = collapsed
+
+    # Victorian meetings only by default (FORMKING_STATES=ALL for every state):
+    # the syndicate bets Victoria and each extra card costs 5 credits.
+    states = allowed_states()
+    if states:
+        upcoming = [m for m in upcoming if meeting_state(m) in states]
 
     # 0 / negative / unset => load every upcoming meeting; else cap for credits.
     selected = upcoming if max_meetings <= 0 else upcoming[:max_meetings]
