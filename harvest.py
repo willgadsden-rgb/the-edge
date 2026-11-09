@@ -198,13 +198,25 @@ def _past_event(out, ev, horse_name, pulled_at):
         "source": "pastEvents", "updated_at": pulled_at,
     })
     # Top placegetters of that race: partial rows for horses we may never card.
-    for p in ev.get("placings") or []:
+    # Placings give lengths BEHIND the winner (winner 0.0); convert to the
+    # pastEvents convention used everywhere: winner = +winning margin, others =
+    # -lengths beaten. The winning margin is the 2nd placegetter's margin.
+    placings = ev.get("placings") or []
+    second = next((_float(p.get("margin")) for p in placings
+                   if _int(p.get("finishPosition")) == 2), None)
+    for p in placings:
         if p.get("thisHorse") or not p.get("horse"):
             continue
+        pos = _int(p.get("finishPosition")) or None
+        raw = _float(p.get("margin"))
+        if pos == 1:
+            margin = second
+        else:
+            margin = -abs(raw) if raw is not None else None
         out["runs"].append({
             "race_id": race_id, "horse_name": p["horse"], "barrier": _int(p.get("barrier")),
             "weight": _float(p.get("weight")) or None, "jockey": p.get("jockey"),
-            "finish_pos": _int(p.get("finishPosition")) or None, "margin": _float(p.get("margin")),
+            "finish_pos": pos, "margin": margin,
             "field_size": _int(ev.get("numRunners")), "source": "placings", "updated_at": pulled_at,
         })
 

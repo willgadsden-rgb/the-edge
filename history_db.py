@@ -56,6 +56,7 @@ TABLES = {
     },
     "runs": {
         "key": ["race_id", "horse_name"],
+        # margin: winner = +winning margin (lengths), others = -lengths beaten.
         "cols": [("race_id", "TEXT"), ("horse_name", "TEXT"), ("runner_number", "INTEGER"),
                  ("barrier", "INTEGER"), ("weight", "REAL"), ("jockey", "TEXT"),
                  ("finish_pos", "INTEGER"), ("margin", "REAL"), ("field_size", "INTEGER"),
