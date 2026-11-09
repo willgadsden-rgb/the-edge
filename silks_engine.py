@@ -1,10 +1,9 @@
 """Jockey silks & saddlecloth visual identity for The Edge (Phase 8).
 
-Generates deterministic vector (SVG) racing-silk jerseys from a seeded colour +
-pattern spec per horse (no external API needed), returns them as data URIs for
-inline rendering, and assigns saddlecloth numbers + caches the silks in the DB.
-Mock data only (see CLAUDE.md). If a real silk image URL is later stored in
-race_entries.silk_url it takes precedence.
+Generates a colour-coded jersey per horse as a VISUAL MARKER only - these are not
+the horse's registered racing colours (the feed has no silks). Saddlecloth numbers
+and jockeys are the real ones from the Form King card. If a real silk image URL is
+later stored in race_entries.silk_url it takes precedence.
 """
 
 import base64
@@ -15,9 +14,7 @@ PALETTE = ["#e11d48", "#2563eb", "#059669", "#f59e0b", "#7c3aed", "#0ea5e9",
            "#111827", "#e5e7eb", "#db2777", "#15803d", "#ea580c", "#facc15"]
 PATTERNS = ["solid", "halves", "stripes", "hoops", "sash", "quarters", "spots", "chevron"]
 
-JOCKEYS = ["J. McDonald", "C. Williams", "D. Lane", "M. Zahra", "B. Melham",
-           "J. Bowman", "W. Egan", "C. Newitt", "T. Nugent", "E. Brown",
-           "D. Oliver", "L. Currie", "B. Shinn", "J. Allen", "T. Berry"]
+_JOCKEY_CACHE = {}
 
 
 def _rng_int(key):
@@ -38,7 +35,31 @@ def silk_spec(horse_name):
 
 
 def jockey_for(horse_name):
-    return JOCKEYS[_rng_int("jky:" + horse_name) % len(JOCKEYS)]
+    """The horse's REAL jockey from its latest Form King card entry ("-" if unknown)."""
+    if horse_name in _JOCKEY_CACHE:
+        return _JOCKEY_CACHE[horse_name]
+    jockey = "-"
+    try:
+        import json
+        from database import get_connection
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT fk_json FROM race_entries WHERE horse_name = ? AND fk_json IS NOT NULL "
+                "ORDER BY entry_id DESC LIMIT 1", (horse_name,)).fetchone()
+        finally:
+            conn.close()
+        if row and row["fk_json"]:
+            jockey = json.loads(row["fk_json"]).get("jockey") or "-"
+    except Exception:
+        jockey = "-"
+    _JOCKEY_CACHE[horse_name] = jockey
+    return jockey
+
+
+def clear_jockey_cache():
+    """Forget cached jockeys (call after a card rebuild: riders change)."""
+    _JOCKEY_CACHE.clear()
 
 
 def primary_color(horse_name):
@@ -105,13 +126,20 @@ def silk_data_uri(horse_name, size=44):
 
 
 def assign_saddlecloths_and_silks(conn):
-    """Assign saddlecloth numbers (topweight = 1) and cache silk SVGs per runner."""
+    """Cache marker-jersey SVGs per runner. Saddlecloth numbers are the REAL ones
+    from the card; only a runner the feed gave no number gets one by weight order
+    (topweight first) after the numbered runners."""
+    clear_jockey_cache()
     for race in conn.execute("SELECT race_id FROM races").fetchall():
         ents = conn.execute(
-            "SELECT entry_id, horse_name, weight FROM race_entries WHERE race_id=?",
+            "SELECT entry_id, horse_name, weight, saddlecloth FROM race_entries WHERE race_id=?",
             (race["race_id"],)).fetchall()
-        ordered = sorted(ents, key=lambda e: (-e["weight"], e["horse_name"]))
-        for num, e in enumerate(ordered, start=1):
+        used = {e["saddlecloth"] for e in ents if e["saddlecloth"]}
+        nxt = max(used) + 1 if used else 1
+        for e in sorted(ents, key=lambda e: (-e["weight"], e["horse_name"])):
+            num = e["saddlecloth"]
+            if not num:
+                num, nxt = nxt, nxt + 1
             svg = build_silk_svg(silk_spec(e["horse_name"]))
             conn.execute("UPDATE race_entries SET saddlecloth=?, silk_svg=?, silk_url=? WHERE entry_id=?",
                          (num, svg, "", e["entry_id"]))

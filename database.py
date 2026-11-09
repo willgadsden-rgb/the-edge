@@ -188,7 +188,10 @@ MIGRATIONS = {
                      ("apprentice_claim", "REAL"),  # kg claimed by an apprentice (0 = none)
                      ("sire", "TEXT"),              # for the wet-sire / pedigree read
                      ("firm_or_drift", "REAL"),     # feed's net market move (- firms, + drifts)
-                     ("flucs_json", "TEXT")],       # price fluctuation series, JSON list
+                     ("flucs_json", "TEXT"),        # price fluctuation series, JSON list
+                     # v2: every past run on file (up to 12) and the real runner
+                     # profile (jockey, trainer, breeding, records), JSON.
+                     ("runs_json", "TEXT"), ("fk_json", "TEXT")],
     "bets_ledger": [("stake_dollars", "REAL"), ("result", "TEXT")],
     "user_bets": [("clv_percent", "REAL")],   # closing-line value vs Betfair SP
 }

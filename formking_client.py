@@ -201,7 +201,7 @@ def _career_starts(entry):
     return None
 
 
-def _last5(entry):
+def _last5(entry, limit=5):
     """Up to 5 most-recent ACTUAL race runs for a runner, newest first.
 
     Barrier trials (trial=True), spells and non-runs (no finish/distance) are
@@ -236,9 +236,18 @@ def _last5(entry):
             "margin":    _as_float(ev.get("margin")),      # beaten/winning margin (L)
             "sp":        _as_float(ev.get("startingPrice")),
             "trackspd":  _as_float(ev.get("trackSpeed")),  # speed figure for the run
+            # Real per-run context (v2): prep stage, weight, rider, stewards.
+            "prep":      _as_int(ev.get("raceInPrep")),    # run number in that prep
+            "wt":        _as_float(ev.get("weight")),      # weight carried that run
+            "jockey":    ev.get("jockey"),
+            "comment":   ev.get("stewardsComment") or None,
+            "class":     ev.get("restrictions"),
+            "dsp":       _as_int(ev.get("daysSincePreviousRace")),
+            "next_wins": _as_int(((ev.get("subsequentForm") or {}).get("ALL") or {}).get("wins")),
+            "next_runs": _as_int(((ev.get("subsequentForm") or {}).get("ALL") or {}).get("races")),
         })
     runs.sort(key=lambda r: r["date"] or 0, reverse=True)
-    return runs[:5]
+    return runs[:limit]
 
 
 def _jump_time(race):
@@ -254,6 +263,47 @@ def _jump_time(race):
             return int(v)
     d = race.get("date")
     return int(d) if isinstance(d, (int, float)) else None
+
+
+def _profile(entry):
+    """Real runner profile from the card: connections, breeding, records, ratings.
+
+    Only fields Form King actually supplies; anything absent stays None so the
+    UI can show "-" rather than a made-up value.
+    """
+    horse = entry.get("horse") or {}
+    form = entry.get("form") or {}
+    going = form.get("goingForm") or {}
+    jf = entry.get("jockeyForm") or {}
+    tf = entry.get("trainerForm") or {}
+    rt = entry.get("ratings") or {}
+    return {
+        "jockey": entry.get("jockey"), "trainer": entry.get("trainer"),
+        "age": _as_int(horse.get("age")), "sex": horse.get("type"),
+        "sire": horse.get("sire"), "dam": horse.get("dam"), "dam_sire": horse.get("sireOfDam"),
+        "prizemoney": _as_float(entry.get("totalPrizeMoney")),
+        "days_since_run": _as_int(entry.get("daysSinceLastRace")),
+        "days_since_win": _as_int(entry.get("daysSinceLastWin")),
+        "distance_change": entry.get("distanceChange"),
+        "gear_changes": entry.get("gearChanges") or None,
+        "form": {
+            "career": form.get("careerForm"), "track": form.get("trackForm"),
+            "distance": form.get("distanceForm"), "track_dist": form.get("trackAndDistanceForm"),
+            "good": going.get("good"), "soft": going.get("soft"), "heavy": going.get("heavy"),
+            "synthetic": going.get("synthetic"), "dead": going.get("dead"),
+            "slow": going.get("slow"), "fast": going.get("fast"),
+            "first_up": form.get("firstUpForm"), "second_up": form.get("secondUpForm"),
+            "third_up": form.get("thirdUpForm"), "todays_going": form.get("todaysGoingForm"),
+        },
+        "jockey_12m": jf.get("lastTwelveMonthForm"),
+        "jockey_12m_win_pct": _as_float(jf.get("lastTwelveMonthWinPercentage")),
+        "jockey_horse": jf.get("horseComboForm"),
+        "trainer_12m": tf.get("lastTwelveMonthForm"),
+        "trainer_12m_win_pct": _as_float(tf.get("lastTwelveMonthWinPercentage")),
+        "trainer_jockey": tf.get("jockeyComboForm"),
+        "trainer_jockey_win_pct": _as_float(tf.get("jockeyComboWinPercentage")),
+        "fk_rating_exp": _as_float(rt.get("exp")), "fk_rating_peak": _as_float(rt.get("peak")),
+    }
 
 
 # --- mapping: Form King JSON -> ingest shape ---------------------------------
@@ -275,6 +325,7 @@ def _map_entry(entry):
     flucs = o.get("flucs")
     return {
         "horse_name":    name,
+        "saddlecloth":   _as_int(entry.get("number")),      # real race-book number
         "barrier":       int(entry.get("barrier") or 0),
         "weight":        _weight(entry),
         "prep_run_num":  int(prep) if prep else 1,
@@ -287,6 +338,10 @@ def _map_entry(entry):
         "sire":             horse.get("sire"),
         "firm_or_drift":    _as_float(o.get("firmOrDrift")),
         "flucs":            flucs if isinstance(flucs, list) else None,
+        # v2: every past run Form King returns (up to 12) and the runner's real
+        # profile, so no part of the card has to be invented.
+        "runs_all":         _last5(entry, limit=12),
+        "fk_profile":       _profile(entry),
     }
 
 

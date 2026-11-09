@@ -2,7 +2,7 @@
 
 Runs the rating engine, prep profiler and pricing model across every race in
 racing.db, persists score_0_to_100 and fair_odds back to race_entries, and
-prints a styled terminal card per race. Mock data only (see CLAUDE.md).
+prints a styled terminal card per race. Live Form King data only.
 
 Usage:
     python run_model.py
@@ -13,7 +13,6 @@ import json
 from database import get_connection
 from rating_engine import (
     calculate_0_to_100_score,
-    generate_trajectory,
     trajectory_trend,
 )
 from prep_engine import profile_runner
@@ -123,10 +122,15 @@ def evaluate_race(conn, race, meeting):
             barrier=e["barrier"],
             last_positions=[r.get("pos") for r in last5])
 
-        traj = generate_trajectory(e["horse_name"], base_score)
+        # Real rating trend across the actual runs (oldest -> newest).
+        traj = [r["rating"] for r in reversed(last5) if r.get("rating") is not None]
         trend = trajectory_trend(traj)
 
-        prep = profile_runner(e["horse_name"], e["prep_run_num"], base_score)
+        try:
+            all_runs = json.loads(e["runs_json"] or "[]") or last5
+        except Exception:
+            all_runs = last5
+        prep = profile_runner(e["horse_name"], e["prep_run_num"], base_score, all_runs)
         adjusted = round(max(0.0, min(100.0, base_score + prep["prep_adjustment"])), 1)
 
         conn.execute(

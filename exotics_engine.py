@@ -2,12 +2,10 @@
 
 Takes the normalised 100% win-probability vector and derives fair prices for
 Exactas, Quinellas and Trifectas using the Harville model (with an optional
-Henery refinement), then compares to simulated TAB tote dividends to surface
-high-yield exotic overlays. Mock data only (see CLAUDE.md).
+Henery refinement), for the analyst to compare against the live tote. Nothing is simulated.
 """
 
 import itertools
-import random
 
 HENERY_L2 = 0.81
 HENERY_L3 = 0.65
@@ -60,42 +58,24 @@ def exotic_prob_sums(probs):
     return ex, tri
 
 
-def top_exotics(probs, names, seed=7, min_edge=0.25, overround=1.25, top=5):
-    """Return (exacta_overlays, trifecta_overlays) with Edge >= min_edge.
+def fair_exotics(probs, names, top=5):
+    """Most likely exactas and trifectas with their fair (100%) dividends.
 
-    Each combo: type, combo (names), fair dividend, simulated tote dividend, edge.
+    No tote comparison: the Form King feed carries no tote pools, so value is
+    judged by the analyst against the live tote.
     """
-    rng = random.Random(seed)
     ids = list(probs)
-
-    exactas = []
-    for i, j in itertools.permutations(ids, 2):
-        p = harville_exacta(probs, i, j)
-        if p <= 1e-7:
-            continue
-        fd = 1.0 / p
-        tote = round(max(1.5, fd * overround * rng.uniform(0.70, 1.55)), 2)
-        exactas.append({"type": "Exacta", "combo": [names[i], names[j]],
-                        "prob": p, "fair": round(fd, 2), "tote": tote, "edge": tote / fd - 1.0})
-
-    trifectas = []
-    for i, j, k in itertools.permutations(ids, 3):
-        p = harville_trifecta(probs, i, j, k)
-        if p <= 1e-6:
-            continue
-        fd = 1.0 / p
-        tote = round(max(2.0, fd * overround * rng.uniform(0.65, 1.7)), 2)
-        trifectas.append({"type": "Trifecta", "combo": [names[i], names[j], names[k]],
-                          "prob": p, "fair": round(fd, 2), "tote": tote, "edge": tote / fd - 1.0})
-
-    ex = sorted([e for e in exactas if e["edge"] >= min_edge], key=lambda x: -x["edge"])[:top]
-    tri = sorted([t for t in trifectas if t["edge"] >= min_edge], key=lambda x: -x["edge"])[:top]
-    return ex, tri
+    ex = sorted(((harville_exacta(probs, i, j), (i, j))
+                 for i, j in itertools.permutations(ids, 2)), reverse=True)[:top]
+    tri = sorted(((harville_trifecta(probs, i, j, k), (i, j, k))
+                  for i, j, k in itertools.permutations(ids, 3)), reverse=True)[:top]
+    fmt = lambda p, c: {"combo": [names[x] for x in c], "fair": round(1.0 / p, 2) if p > 0 else None}
+    return [fmt(p, c) for p, c in ex], [fmt(p, c) for p, c in tri]
 
 
 if __name__ == "__main__":
     pr = {1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1}
     nm = {1: "A", 2: "B", 3: "C", 4: "D"}
     print("sums:", exotic_prob_sums(pr))
-    ex, tri = top_exotics(pr, nm)
-    print("exacta overlays:", len(ex), "trifecta overlays:", len(tri))
+    ex, tri = fair_exotics(pr, nm)
+    print("top exacta:", ex[0], "top trifecta:", tri[0])

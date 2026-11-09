@@ -1,15 +1,12 @@
 """CLV ledger + settlement for The Edge - Target-Profit ($) model.
 
-Logs qualifying value overlays into bets_ledger, simulates the race jump
-(market movement toward fair price), simulates the official finish weighted by
-model probabilities, computes Closing Line Value, and prints an audited P&L in
-AUD dollars. Mock data only (see CLAUDE.md).
+Logs qualifying value overlays into bets_ledger and prints an audited P&L in AUD
+dollars. Results and CLV come only from official Form King results
+(sync_formking.py); nothing is simulated.
 
 Qualifying bet = value overlay with Edge >= 20% AND market price at/above MAO
 (not VOID). Stake is the To-Win-$100 target-profit amount.
 """
-
-import random
 
 from database import get_connection, ensure_schema
 from staking_engine import calculate_stake, calculate_mao, is_void, TARGET_PROFIT
@@ -93,99 +90,6 @@ def log_recommended_bets(qualifiers=None, conn=None):
             conn.close()
 
 
-def _simulate_winner(conn, race_id, rng):
-    """Pick a winning entry_id for race_id, weighted by model probabilities."""
-    rows = conn.execute(
-        """
-        SELECT entry_id, fair_odds FROM race_entries
-        WHERE race_id = ? AND scratched = 0 AND fair_odds IS NOT NULL
-        """,
-        (race_id,),
-    ).fetchall()
-    ids = [r["entry_id"] for r in rows]
-    weights = [1.0 / r["fair_odds"] for r in rows]
-    total = sum(weights)
-    probs = [w / total for w in weights]
-
-    draw = rng.random()
-    cumulative = 0.0
-    for eid, p in zip(ids, probs):
-        cumulative += p
-        if draw <= cumulative:
-            return eid
-    return ids[-1]
-
-
-def simulate_results_and_clv(conn=None, seed=7):
-    """Settle every open bet: simulate BSP, finish, CLV and dollar profit.
-
-    Profit on a winner = stake * (taken_price - 1) dollars (~= TARGET_PROFIT by
-    construction); a loser forfeits the stake; a scratched runner is VOID with
-    the stake returned.
-    """
-    own_conn = conn is None
-    if own_conn:
-        conn = get_connection()
-    try:
-        ensure_schema(conn)
-        rng = random.Random(seed)
-
-        open_bets = conn.execute(
-            """
-            SELECT b.bet_id, b.entry_id, b.taken_price, b.fair_price, b.stake_dollars,
-                   e.race_id, e.horse_name, e.scratched
-            FROM bets_ledger b
-            JOIN race_entries e ON e.entry_id = b.entry_id
-            WHERE b.result IS NULL
-            ORDER BY e.race_id, b.bet_id
-            """
-        ).fetchall()
-
-        race_ids = sorted({b["race_id"] for b in open_bets})
-        winners = {rid: _simulate_winner(conn, rid, rng) for rid in race_ids}
-
-        settled = 0
-        for b in open_bets:
-            if b["scratched"]:
-                conn.execute(
-                    """
-                    UPDATE bets_ledger
-                    SET result = 'VOID', profit_units = 0.0, bsp = NULL, clv_percent = NULL
-                    WHERE bet_id = ?
-                    """,
-                    (b["bet_id"],),
-                )
-                settled += 1
-                continue
-
-            taken, fair, stake = b["taken_price"], b["fair_price"], b["stake_dollars"]
-
-            convergence = rng.uniform(0.5, 0.9)
-            bsp = taken - convergence * (taken - fair)
-            bsp = round(max(1.01, bsp), 2)
-            clv = ((taken / bsp) - 1.0) * 100.0
-
-            won = (b["entry_id"] == winners[b["race_id"]])
-            result = "WIN" if won else "LOSS"
-            profit = stake * (taken - 1.0) if won else -stake
-
-            conn.execute(
-                """
-                UPDATE bets_ledger
-                SET bsp = ?, clv_percent = ?, result = ?, profit_units = ?
-                WHERE bet_id = ?
-                """,
-                (bsp, round(clv, 2), result, round(profit, 2), b["bet_id"]),
-            )
-            settled += 1
-
-        conn.commit()
-        return settled
-    finally:
-        if own_conn:
-            conn.close()
-
-
 def print_syndicate_pnl(conn=None):
     """Print the audited performance table from bets_ledger, in dollars."""
     own_conn = conn is None
@@ -257,5 +161,4 @@ def print_syndicate_pnl(conn=None):
 if __name__ == "__main__":
     n = log_recommended_bets()
     print("Logged {} bets".format(n))
-    simulate_results_and_clv()
     print_syndicate_pnl()
