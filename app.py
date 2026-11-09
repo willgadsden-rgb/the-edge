@@ -46,6 +46,8 @@ import track_play_engine
 import exotics_engine
 import silks_engine
 import sync_formking
+import form_model as fm_mod
+from history_db import HistoryDB
 from database import get_connection, geometry_for, par_for, init_db, ensure_schema
 from pricing_engine import (fair_book_from_scores, effective_odds, commission_for_state,
                             calculate_blended_fair_prices)
@@ -123,6 +125,9 @@ st.markdown(
               border:1px solid var(--line); border-radius:9px; background:var(--surf2); }
       .rc-sub  { color:var(--dim); font-size:.84rem; margin-top:3px; }
       .rc-proj { font-family:var(--mono); font-size:.86rem; font-weight:700; margin-top:4px; }
+      .rc-form { font-family:var(--mono); font-size:.82rem; margin-top:3px; }
+      .rc-form .up { color:#16a34a; } .rc-form .dn { color:#dc2626; }
+      .rc-form .fm-badge { margin-left:6px; padding:1px 6px; border-radius:8px; border:1px solid #94a3b8; font-size:.74rem; }
       .proj-up { color:var(--orange-2); } .proj-dn { color:var(--red); }
       .rc-prep { display:inline-block; margin-top:7px; padding:3px 9px; border-radius:7px; background:var(--surf2);
                  color:var(--dim); border:1px solid var(--line); font-size:.72rem; font-weight:700; letter-spacing:.02em; }
@@ -496,6 +501,60 @@ def _rowget(row, key, default=None):
         return default
 
 
+_FORM_ERR = {"msg": None}
+
+
+@st.cache_resource(ttl=3600, show_spinner="Loading form history…")
+def _form_model():
+    """The v2 form model over the history database (Supabase via DATABASE_URL).
+    Returns None when no history is reachable, so the card still renders."""
+    try:
+        db = HistoryDB()
+        try:
+            hist = fm_mod.load_history(db)
+        finally:
+            db.close()
+        return fm_mod.FormModel(hist) if len(hist) else None
+    except Exception as exc:          # no DATABASE_URL / network: card works without it
+        _FORM_ERR["msg"] = str(exc)
+        return None
+
+
+def _form_rating(horse, race, meeting):
+    """Lengths-vs-par rating for one runner, or None without a history DB."""
+    model = _form_model()
+    if model is None:
+        return None
+    try:
+        r = model.rate(horse, race["distance"], meeting["condition"], race["class_name"],
+                       meeting["track_name"], _rowget(meeting, "meeting_date"))
+        r["best_stage"] = model.best_stage(horse)
+        return r
+    except Exception:
+        return None
+
+
+def _form_line(fm):
+    """Runner-card line for the form rating."""
+    if fm is None:
+        return ""
+    if fm.get("gap_l") is None:
+        return ('<div class="rc-form" title="No rated runs on file for this horse yet.">'
+                '📏 Form: no rated runs on file</div>')
+    cls = "up" if fm["gap_l"] >= 0 else "dn"
+    ceil = fm.get("ceiling_gap_l")
+    best = " · best {}".format(fm["best_stage"]) if fm.get("best_stage") else ""
+    badge = '<span class="fm-badge">{}</span>'.format(fm["badge"]) if fm.get("badge") else ""
+    return ('<div class="rc-form" title="Form rating from the history database: the horse\'s expected run '
+            'today, in lengths against the median winner of this class at this tier of track '
+            '({par_races} races). Ceiling = its best relevant run. Confidence comes from how many '
+            'relevant, recent runs it has.">📏 Form: <b class="{cls}">{gap:+.1f}L</b> vs {cg} par · '
+            'ceiling {ceil} · {conf} confidence ({n} runs){best}{badge}</div>').format(
+                par_races=fm.get("par_races", 0), cls=cls, gap=fm["gap_l"], cg=fm["class_group"],
+                ceil="{:+.1f}L".format(ceil) if ceil is not None else "-",
+                conf=fm["confidence"], n=fm["runs_used"], best=best, badge=badge)
+
+
 def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
                   rule_mgr=None, env=None):
     """Full per-runner evaluation: situational angles, tactical settling, custom
@@ -632,6 +691,7 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
             custom_badges=custom_badges, env_badges=env_badges, triggers=triggers,
             manual=manual, projected=projected, traj=traj, is_debut=is_debut,
             real_runs=real_runs, runs_all=all_runs, fk=fk, prep_tag=prep["tag"],
+            fm=_form_rating(e["horse_name"], race, meeting),
             trend=(0.0 if (is_debut or not traj) else trajectory_trend(traj)), tactical=tac,
             form_delta=round(prep["prep_adjustment"], 1),
             # Condition / distance suitability are not added to the score until
@@ -669,7 +729,7 @@ def evaluate_race(entries, scratched_names, race, meeting, markets, track_bias,
                   "manual": c["manual"], "projected": c["projected"],
                   "par": par, "par_delta": round(c["projected"] - par, 1), "cond": cond,
                   "traj": c["traj"], "trend": c["trend"], "is_debut": c["is_debut"],
-                  "real_runs": c["real_runs"], "runs_all": c["runs_all"], "fk": c["fk"],
+                  "real_runs": c["real_runs"], "runs_all": c["runs_all"], "fk": c["fk"], "fm": c["fm"],
                   "prep_tag": c["prep_tag"],
                   "lane": tac.get("lane"), "lane_name": tac.get("lane_name", "-"),
                   "settle_zone": tac.get("zone", "-"),
@@ -1815,6 +1875,7 @@ def render_worksheet(rows, race, cloth):
             "RFS": _RFS.get(min(int(r["prep_run"]), 5), "-"),
             "DLS": r["dls"],
             "Base": round(r["base"], 1),
+            "Form L": (r.get("fm") or {}).get("gap_l"),
             "FormΔ": r["form_delta"],
             "CondΔ": r["cond_delta"],
             "DistΔ": r["dist_delta"],
@@ -1983,7 +2044,8 @@ def render_runner_card(r, race, cloth):
             '<span class="rc-cloth" title="Saddlecloth number.">{cloth}</span><span class="rc-name">{name}</span>'
             '<div class="rc-sub" title="Barrier drawn, carried weight, the raw 0-100 model rating, and the jockey.">Barrier {bar} · {wt:.1f}kg · Model {score:.1f} · {jky}</div>'
             '<div class="rc-proj {pcls}" title="Projected rating after today\'s adjustments, and how far it sits above (+) or below (-) the par score needed to win this class.">Projected: {proj:.1f} (vs Par: {delta:+.1f})</div>'
-            '{tac}{prep}{angles}{cust}{env}{trig}{form}'.format(
+            '{fmline}{tac}{prep}{angles}{cust}{env}{trig}{form}'.format(
+                fmline=_form_line(r.get("fm")),
                 cloth=cloth[r["horse_name"]], name=r["horse_name"], bar=r["barrier"],
                 wt=r["weight"], score=r["base"], pcls=proj_cls,
                 silk=silks_engine.silk_data_uri(r["horse_name"]),
@@ -2362,8 +2424,9 @@ _hdr = meeting["track_name"] if sel_meeting is not None else "Today's Meetings"
 st.markdown('<div class="pie-title">🏇 {brand} — {track}</div><div class="pie-tag">{tag}</div>'.format(
     brand=BRAND, track=_hdr, tag=TAGLINE), unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4, tabg, tabset = st.tabs([
+tab1, tabh, tab2, tab3, tab4, tabg, tabset = st.tabs([
     "📊 Race Cards & Overlays",
+    "🐎 Horse Form",
     "🏇 Realistic Speed Map",
     "🎯 Suggested Bets & Tracker",
     "🤖 AI Database Assistant",
@@ -2890,6 +2953,145 @@ with tab3:
     st.dataframe(pd.DataFrame([dict(b) for b in bets]), use_container_width=True, hide_index=True)
     st.caption("To-Win-$100 staking. Results come only from official Form King results; "
                "CLV beat rate = share of bets whose taken price beat the BSP.")
+
+
+# -----------------------------------------------------------------------------
+# Horse Form tab: every run on file, rating over time, records by prep stage
+# -----------------------------------------------------------------------------
+with tabh:
+    model = _form_model()
+    if model is None:
+        st.info("The history database isn't connected. Add `DATABASE_URL` (Supabase VIC FORM → "
+                "Connect → Session pooler) to this app's secrets, then press Reload.")
+        if _FORM_ERR["msg"]:
+            st.caption("Last error: {}".format(_FORM_ERR["msg"][:200]))
+        if st.button("🔄 Reload form history", key="fm_reload_empty"):
+            _form_model.clear(); st.rerun()
+    else:
+        h_all = model.h
+        st.caption("{:,} runs · {:,} horses · {:,} races on file (Form King history).".format(
+            len(h_all), h_all["horse_name"].nunique(), h_all["race_id"].nunique()))
+        # Today's runners first, then every horse on file.
+        conn = get_connection()
+        try:
+            todays = [r["horse_name"] for r in conn.execute(
+                "SELECT DISTINCT horse_name FROM race_entries WHERE scratched = 0 ORDER BY horse_name")]
+        finally:
+            conn.close()
+        names = sorted(set(h_all["horse_name"].dropna()))
+        c1, c2 = st.columns([3, 1])
+        horse = c1.selectbox("Horse", [""] + todays + [n for n in names if n not in set(todays)], key="fm_horse",
+                             format_func=lambda n: "Type or pick a horse…" if n == "" else n,
+                             help="Today's runners are listed first; every horse on file is searchable.")
+        if c2.button("🔄 Reload form history", help="Re-read the history database (it refreshes hourly)."):
+            _form_model.clear(); st.rerun()
+
+        if horse:
+            runs = model.horse_runs(horse)
+            # Today's race context, when the horse is on today's card.
+            conn = get_connection()
+            try:
+                ctx = conn.execute(
+                    "SELECT r.distance, r.class_name, m.condition, m.track_name, m.meeting_date "
+                    "FROM race_entries e JOIN races r ON r.race_id = e.race_id "
+                    "JOIN meetings m ON m.meeting_id = r.meeting_id WHERE e.horse_name = ? "
+                    "ORDER BY e.entry_id DESC LIMIT 1", (horse,)).fetchone()
+            finally:
+                conn.close()
+            if ctx:
+                rt = model.rate(horse, ctx["distance"], ctx["condition"], ctx["class_name"],
+                                ctx["track_name"], ctx["meeting_date"])
+                where = "today: {} {}m {}, {}".format(ctx["track_name"], ctx["distance"],
+                                                      ctx["class_name"], ctx["condition"])
+            else:
+                last = runs.iloc[0] if len(runs) else None
+                rt = model.rate(horse, last["distance"] if last is not None else None, None,
+                                last["race_name"] if last is not None else None,
+                                last["track"] if last is not None else None)
+                where = "against its last start's class and track"
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Form vs par", "{:+.1f}L".format(rt["gap_l"]) if rt["gap_l"] is not None else "-",
+                      help="Expected run {} in lengths against the median winner of that class at "
+                           "that tier of track.".format(where))
+            m2.metric("Ceiling vs par", "{:+.1f}L".format(rt["ceiling_gap_l"]) if rt.get("ceiling_gap_l") is not None else "-",
+                      help="Its best relevant run in the last six starts, in lengths against the same par.")
+            m3.metric("Confidence", rt["confidence"],
+                      help="High = at least 3 effective recent runs and 2+ on today's going and trip.")
+            m4.metric("Best prep stage", model.best_stage(horse) or "-",
+                      help="The stage of a prep where it rates best on average: at least 2 runs there "
+                           "and 1+ rating point above its overall average.")
+            st.caption("Rated {}. Class par {} ({} races).".format(
+                where, "{:.1f}".format(rt["par"]) if rt["par"] else "-", rt["par_races"]))
+
+            if len(runs):
+                import altair as alt
+                chart_df = runs.dropna(subset=["wfa_rating", "race_date"])[
+                    ["race_date", "wfa_rating", "stage", "track", "distance", "finish_pos", "going"]].copy()
+                chart_df["Result"] = chart_df["finish_pos"].map(lambda p: "-" if pd.isna(p) else str(int(p)))
+                if len(chart_df):
+                    line = alt.Chart(chart_df).mark_line(color="#94a3b8").encode(
+                        x=alt.X("race_date:T", title=None), y=alt.Y("wfa_rating:Q", title="Run rating",
+                                                                 scale=alt.Scale(zero=False)))
+                    pts = alt.Chart(chart_df).mark_circle(size=90).encode(
+                        x="race_date:T", y="wfa_rating:Q",
+                        color=alt.Color("stage:N", title="Prep stage",
+                                        sort=["1st-up", "2nd-up", "3rd-up", "4th-up", "5th-up+"]),
+                        tooltip=[alt.Tooltip("race_date:T", title="Date"), "track", "distance", "going",
+                                 alt.Tooltip("stage:N", title="Prep"), alt.Tooltip("Result:N", title="Finish"),
+                                 alt.Tooltip("wfa_rating:Q", title="Rating", format=".1f")])
+                    rule_df = chart_df[chart_df["stage"] == "1st-up"]
+                    rules = alt.Chart(rule_df).mark_rule(strokeDash=[4, 4], color="#cbd5e1").encode(x="race_date:T")
+                    par_val = rt["par"]
+                    layers = [rules, line, pts]
+                    if par_val:
+                        layers.append(alt.Chart(pd.DataFrame({"par": [par_val]})).mark_rule(color="#f59e0b").encode(y="par:Q"))
+                    st.altair_chart(alt.layer(*layers).properties(height=260), use_container_width=True)
+                    st.caption("Each dot is a run, coloured by prep stage; dashed lines mark a new prep "
+                               "(1st-up); the orange line is the class par.")
+
+                recs = model.records(horse)
+                rc1, rc2 = st.columns(2)
+                rc1.markdown("**By prep stage**")
+                rc1.dataframe(recs["Prep stage"], hide_index=True, use_container_width=True)
+                rc2.markdown("**By going**")
+                rc2.dataframe(recs["Going"], hide_index=True, use_container_width=True)
+                rc3, rc4 = st.columns(2)
+                rc3.markdown("**By distance**")
+                rc3.dataframe(recs["Distance"], hide_index=True, use_container_width=True)
+                rc4.markdown("**By spacing between runs**")
+                rc4.dataframe(recs["Spacing"], hide_index=True, use_container_width=True)
+                st.markdown("**By track**")
+                st.dataframe(recs["Track"], hide_index=True, use_container_width=True)
+
+                st.markdown("**Every run on file**")
+                tbl = runs.copy()
+                tbl["Finish"] = [("{:.0f}/{:.0f}".format(p, f) if pd.notna(f) else "{:.0f}".format(p))
+                                 if pd.notna(p) else "-" for p, f in zip(tbl["finish_pos"], tbl["field_size"])]
+                tbl["Beaten (L)"] = tbl["beaten"].round(1)
+                tbl["Excuse"] = tbl["excuse"].map(lambda x: "⚠️" if x else "")
+                show = tbl.rename(columns={
+                    "race_date": "Date", "track": "Track", "distance": "Dist", "going": "Going",
+                    "class_group": "Class", "stage": "Prep", "wfa_rating": "Rating", "sp": "SP",
+                    "bsp": "BSP", "settle_pos": "Settled", "jockey": "Jockey",
+                    "stewards_comment": "Stewards"})[
+                    ["Date", "Track", "Dist", "Going", "Class", "Prep", "Finish", "Beaten (L)", "Rating",
+                     "SP", "BSP", "Settled", "Jockey", "Excuse", "Stewards"]]
+                show["Date"] = show["Date"].dt.date
+                st.dataframe(show, hide_index=True, use_container_width=True,
+                             column_config={"Rating": st.column_config.NumberColumn(format="%.1f"),
+                                            "SP": st.column_config.NumberColumn(format="$%.2f"),
+                                            "BSP": st.column_config.NumberColumn(format="$%.2f")})
+                st.caption("⚠️ = the stewards noted trouble; those runs count half in the form rating.")
+            else:
+                st.info("No runs on file for this horse yet.")
+
+        with st.expander("What every horse does at each prep stage"):
+            st.dataframe(model.prep_population(), hide_index=True, use_container_width=True)
+            st.caption("A/E = actual wins ÷ wins the starting prices implied. Raw SP includes the "
+                       "bookmaker margin, so compare stages with each other rather than with 1.00. "
+                       "Similar figures at every stage mean the market already prices prep stage on "
+                       "its own; the edge has to come from combinations. Horses on file are ones "
+                       "still racing, so win rates read high.")
 
 
 # -----------------------------------------------------------------------------
