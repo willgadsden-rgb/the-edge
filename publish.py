@@ -72,7 +72,7 @@ PUB_TABLES = {
                  ("value_flag", "INTEGER"), ("stake", "REAL"), ("flucs", "TEXT"), ("last_runs", "TEXT"),
                  ("finish_pos", "INTEGER"), ("margin", "REAL"), ("result_bsp", "REAL"),
                  ("result_sp", "REAL"), ("result_rating", "REAL"), ("result_comment", "TEXT"),
-                 ("published_at", "TEXT"), ("scratched", "INTEGER")],
+                 ("published_at", "TEXT"), ("scratched", "INTEGER"), ("going_form", "TEXT")],
     },
 }
 
@@ -304,6 +304,8 @@ def publish_card(db, card, model=None, published_at=None):
                 "jockey": prof.get("jockey"), "trainer": prof.get("trainer"), "age": prof.get("age"),
                 "sex": prof.get("sex"), "sire": prof.get("sire"),
                 "career": (prof.get("form") or {}).get("career"),
+                "going_form": json.dumps({k: (prof.get("form") or {}).get(k) for k in
+                                          ("good", "soft", "heavy", "synthetic", "dead", "slow", "fast", "todays_going")}),
                 "prep_run": prep, "prep_stage": STAGES.get(prep, "5th-up+"), "best_stage": best,
                 "days_since_run": prof.get("days_since_run"), "distance_change": prof.get("distance_change"),
                 "gear_changes": prof.get("gear_changes"), "base_score": round(base, 1),

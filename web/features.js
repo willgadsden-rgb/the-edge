@@ -102,8 +102,86 @@ function ratedRuns(r, race) {
       : l >= -PAR_BAND ? 'border-amber-500/60 text-amber-300 bg-amber-500/10' : 'border-red-500/50 text-red-300 bg-red-500/10';
     const tip = `${x.date || ''} ${x.track || ''} ${x.dist ?? ''}m · ${x.pos ?? '?'}/${x.field ?? '?'} · rating ${num(x.rating, 1)}` +
       (l === null ? '' : ` · ${l >= 0 ? '+' : ''}${l.toFixed(1)}L vs today's par ${num(race.form_par, 1)}`);
-    return `<span class="px-1.5 py-0.5 rounded border text-[10px] font-mono-numbers font-bold ${cls}" title="${esc(tip)}">${Math.round(x.rating)}${x.pos === 1 ? '<sup>w</sup>' : ''}</span>`;
+    return `<span class="px-1.5 py-0.5 rounded border text-[10px] font-mono-numbers font-bold ${cls}" data-tip="${esc(tip)}">${Math.round(x.rating)}${x.pos === 1 ? '<sup>w</sup>' : ''}</span>`;
   }).join('') + '</span>';
+}
+
+// ---------------------------------------------------------------- average + going suitability
+function avgRating(r, n = 5) {
+  const xs = parseJSON(r.last_runs, []).map(x => x.rating).filter(v => v).slice(0, n);
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+}
+function avgBadge(r) {
+  const a = avgRating(r);
+  return a === null ? '' : ` <span class="text-gray-400 font-normal text-[11px] font-mono-numbers" title="Average Form King rating of its last ${Math.min(5, parseJSON(r.last_runs, []).filter(x => x.rating).length)} rated runs">(${a.toFixed(1)})</span>`;
+}
+
+// Form King's going records: good + dead = dry (Good 1-4), slow = soft (5-7),
+// heavy (8-10), synthetic.
+const BAND_KEYS = { Good: ['good', 'dead', 'fast', 'firm'], Soft: ['slow', 'soft'], Heavy: ['heavy'], Synthetic: ['synthetic'] };
+const BAND_LABEL = { Good: 'Dry', Soft: 'Soft', Heavy: 'Heavy', Synthetic: 'Synthetic' };
+function parseRec(x) {
+  const m = String(x || '').match(/^(\d+):(\d+)-(\d+)-(\d+)/);
+  return m ? { n: +m[1], w: +m[2], s: +m[3], t: +m[4] } : null;
+}
+function goingRecords(r) {
+  const g = parseJSON(r.going_form, null);
+  const runs = parseJSON(r.last_runs, []);
+  const out = {};
+  Object.entries(BAND_KEYS).forEach(([band, keys]) => {
+    const rec = { n: 0, w: 0, p: 0, ratings: [] };
+    let any = false;
+    if (g) keys.forEach(k => { const q = parseRec(g[k]); if (q) { any = true; rec.n += q.n; rec.w += q.w; rec.p += q.w + q.s + q.t; } });
+    runs.forEach(x => { if (x.rating && GOING_OF(x.going) === band) rec.ratings.push(x.rating); });
+    if (!any) {   // no Form King record published yet: count the runs we hold
+      runs.forEach(x => { if (GOING_OF(x.going) === band && x.pos) { rec.n++; if (x.pos === 1) rec.w++; if (x.pos <= 3) rec.p++; } });
+    }
+    rec.avg = rec.ratings.length ? rec.ratings.reduce((a, b) => a + b, 0) / rec.ratings.length : null;
+    out[band] = rec;
+  });
+  return out;
+}
+function bandVerdict(rec, overallAvg) {
+  if (!rec || !rec.n) return { v: 'unraced', cls: 'border-[#1e2638] text-gray-400' };
+  const wp = rec.w / rec.n, pp = rec.p / rec.n;
+  const lift = rec.avg !== null && overallAvg !== null && rec.ratings.length >= 2 ? rec.avg - overallAvg : 0;
+  if (wp >= 0.25 || (rec.n >= 2 && pp >= 0.5) || lift >= 2) return { v: 'suited', cls: 'sect-green' };
+  if (rec.n >= 3 && rec.w === 0 && pp < 0.25 || lift <= -2.5) return { v: 'poor', cls: 'sect-red' };
+  return { v: 'fair', cls: 'sect-yellow' };
+}
+function goingTag(r, race) {
+  const band = GOING_OF((S.meeting || {}).going);
+  if (!BAND_KEYS[band]) return '';
+  const recs = goingRecords(r), rec = recs[band], ov = avgRating(r, 8);
+  const v = bandVerdict(rec, ov);
+  const label = BAND_LABEL[band];
+  const txt = v.v === 'unraced' ? `${label}?` : v.v === 'suited' ? `✓ ${label}` : v.v === 'poor' ? `✗ ${label}` : `~ ${label}`;
+  const tip = v.v === 'unraced' ? `Never raced on a ${label.toLowerCase()} track.` :
+    `${label} record ${rec.n}: ${rec.w} wins, ${rec.p} placings (${Math.round(rec.p / rec.n * 100)}% placed)` +
+    (rec.avg !== null ? `; average rating ${rec.avg.toFixed(1)} on ${label.toLowerCase()} vs ${ov !== null ? ov.toFixed(1) : '–'} overall` : '') + `. Today: ${(S.meeting || {}).going || ''}.`;
+  return `<span class="pill ${v.cls} mr-1" title="${esc(tip)}">${txt}</span>`;
+}
+function goingDetail(r, race) {
+  const recs = goingRecords(r), ov = avgRating(r, 8);
+  const today = GOING_OF((S.meeting || {}).going);
+  const cells = Object.keys(BAND_KEYS).map(b => {
+    const rec = recs[b], v = bandVerdict(rec, ov);
+    return `<div class="px-3 py-2 rounded-lg border ${b === today ? 'border-[#ff6600]/60' : 'border-[#1e2638]'} bg-[#0d1117] text-xs">
+      <div class="text-[10px] uppercase tracking-widest ${b === today ? 'text-[#ff6600]' : 'text-gray-500'}">${BAND_LABEL[b]}${b === today ? ' · today' : ''}</div>
+      <div class="font-mono-numbers text-white mt-0.5">${rec.n ? `${rec.n}: ${rec.w}-${rec.p - rec.w} <span class="text-gray-500">(${Math.round(rec.p / rec.n * 100)}% placed)</span>` : '<span class="text-gray-500">unraced</span>'}</div>
+      <div class="text-[10px] mt-0.5"><span class="pill ${v.cls}">${v.v.toUpperCase()}</span>${rec.avg !== null ? ` <span class="text-gray-400">avg ${rec.avg.toFixed(1)}</span>` : ''}</div></div>`;
+  }).join('');
+  const wet = ['Soft', 'Heavy'].map(b => recs[b]).filter(x => x.n >= 2), dry = recs.Good;
+  const pct = x => x.n ? x.p / x.n : 0;
+  let pref = '';
+  if (wet.length && dry.n >= 2) {
+    const wp = Math.max(...wet.map(pct)), dp = pct(dry);
+    if (wp - dp >= 0.2) pref = '<span class="pill sect-green">WET TRACKER</span> places more often on soft/heavy';
+    else if (dp - wp >= 0.2) pref = '<span class="pill sect-yellow">DRY TRACKER</span> places more often on dry tracks';
+  }
+  return `<div class="mt-3 text-[10px] text-gray-500 uppercase tracking-widest">Track condition record</div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-1">${cells}</div>
+    ${pref ? `<div class="text-[11px] text-gray-300 mt-2">${pref}</div>` : ''}`;
 }
 
 // ---------------------------------------------------------------- modifiers
@@ -377,7 +455,7 @@ function ratingChart(runs, par) {
   svg += `<path d="${path}" fill="none" stroke="#ffa366" stroke-width="2"/>`;
   xs.forEach((x, i) => {
     const c = x.finish_pos === 1 ? '#10b981' : x.finish_pos <= 3 ? '#f59e0b' : '#6b7280';
-    svg += `<circle cx="${X(i)}" cy="${Y(x.wfa_rating)}" r="4.5" fill="${c}" stroke="#090c10" stroke-width="1.5"><title>${esc(x.race_date)} ${esc(x.track)} ${x.distance}m · ${x.finish_pos}/${x.field_size ?? ''} · rating ${num(x.wfa_rating, 1)} · ${STAGE_OF(x.race_in_prep)}</title></circle>`;
+    svg += `<circle cx="${X(i)}" cy="${Y(x.wfa_rating)}" r="4.5" fill="${c}" stroke="#090c10" stroke-width="1.5"/><circle cx="${X(i)}" cy="${Y(x.wfa_rating)}" r="10" fill="transparent" data-tip="${esc(`${x.race_date} ${x.track} ${x.distance}m · ${x.finish_pos}/${x.field_size ?? ''} · rating ${num(x.wfa_rating, 1)} · ${STAGE_OF(x.race_in_prep)}`)}"/>`;
     if (x.race_in_prep === 1) svg += `<text x="${X(i)}" y="${H - 6}" fill="#6b7280" font-size="9" text-anchor="middle">1u</text>`;
   });
   return svg + '</svg><div class="text-[10px] text-gray-500">Form King rating per run, oldest to newest · green won · amber placed · "1u" marks a first-up run (new preparation).</div>';
@@ -636,3 +714,169 @@ function renderReviewSummary() {
 
 // ---------------------------------------------------------------- wire up
 window.addEventListener('keydown', e => { if (e.key === 'Escape') closeHorse(); });
+
+
+// ---------------------------------------------------------------- instant tooltips
+// Anything with data-tip shows its text straight away on hover (the browser's own
+// title tooltip waits about a second).
+(function () {
+  const tip = document.createElement('div');
+  tip.style.cssText = 'position:fixed;z-index:80;pointer-events:none;display:none;max-width:320px;background:#0d1117;border:1px solid #ff6600;color:#e6edf3;font:600 11px/1.4 "Plus Jakarta Sans",sans-serif;padding:6px 9px;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+  const place = e => {
+    const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = e.clientX + pad, y = e.clientY + pad;
+    if (x + w > innerWidth - 8) x = e.clientX - w - pad;
+    if (y + h > innerHeight - 8) y = e.clientY - h - pad;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  };
+  document.addEventListener('mouseover', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) { tip.style.display = 'none'; return; }
+    tip.textContent = el.getAttribute('data-tip');
+    tip.style.display = 'block'; place(e);
+  });
+  document.addEventListener('mousemove', e => { if (tip.style.display === 'block') place(e); });
+  document.addEventListener('scroll', () => { tip.style.display = 'none'; }, true);
+  window.addEventListener('DOMContentLoaded', () => document.body.appendChild(tip));
+  if (document.body) document.body.appendChild(tip);
+})();
+
+
+// ---------------------------------------------------------------- meeting review: ALL
+// A snapshot of every meeting on the selected date: winners, the market, our
+// book, the best runs and horses to follow.
+const REV = { date: null, data: null, loading: false };
+
+async function loadReviewDay(date) {
+  const { data: meets } = await sb.from('edge_meetings').select('*').eq('meeting_date', date);
+  const mids = (meets || []).map(m => m.meeting_id);
+  let races = [], runners = [];
+  if (mids.length) {
+    const r1 = await sb.from('edge_races').select('*').in('meeting_id', mids).order('race_number');
+    races = r1.data || [];
+    const ids = races.map(r => r.race_id);
+    for (let i = 0; i < ids.length; i += 60) {
+      const r2 = await sb.from('edge_runners').select('*').in('race_id', ids.slice(i, i + 60));
+      runners = runners.concat(r2.data || []);
+    }
+  }
+  let hist = [];
+  try {
+    const { data, error } = await sb.rpc('edge_race_runs', { p_race_ids: races.map(r => r.race_id) });
+    if (!error) hist = data || [];
+  } catch (e) {}
+  return { meets: meets || [], races, runners, hist };
+}
+
+async function renderReviewAll() {
+  const box = document.getElementById('reviewAllView');
+  if (REV.date !== S.date || !REV.data) {
+    if (REV.loading) return;
+    REV.loading = true;
+    box.innerHTML = '<div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-8 text-gray-400">Pulling every meeting for this date…</div>';
+    try { REV.data = await loadReviewDay(S.date); REV.date = S.date; } finally { REV.loading = false; }
+  }
+  const { meets, races, runners, hist } = REV.data;
+  const M = Object.fromEntries(meets.map(m => [m.meeting_id, m]));
+  const H = {}; hist.forEach(h => { H[h.race_id + '|' + h.horse_name] = h; });
+  const byRace = {}; runners.forEach(r => { if (!r.scratched) (byRace[r.race_id] = byRace[r.race_id] || []).push(r); });
+  const done = races.filter(r => r.result_in);
+  if (!done.length) {
+    box.innerHTML = `<div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-8 text-gray-400">No results yet for ${esc(S.date)}. They land with the night sync (about 11:30pm), or press Sync Data after the last race.</div>`;
+    return;
+  }
+  const tag = race => `${esc((M[race.meeting_id] || {}).track || '')} R${race.race_number}`;
+  const rated = (race, r) => { const h = H[race.race_id + '|' + r.horse_name] || {}; return r.result_rating || h.wfa_rating || null; };
+  // ---- per race facts
+  let favWins = 0, topWins = 0, topExp = 0, vN = 0, vW = 0, vSt = 0, vPl = 0;
+  const winners = [], bestRuns = [], movers = [], follow = [], upsets = [], beatenFavs = [];
+  done.forEach(race => {
+    const rows = (byRace[race.race_id] || []).filter(r => r.finish_pos);
+    if (!rows.length) return;
+    const win = rows.find(r => r.finish_pos === 1);
+    const spFav = rows.filter(r => r.result_sp).sort((a, b) => a.result_sp - b.result_sp)[0];
+    const book = rows.filter(r => r.p_blend).sort((a, b) => b.p_blend - a.p_blend);
+    const top = book[0];
+    if (spFav && spFav.finish_pos === 1) favWins++;
+    if (top) { topExp += top.p_blend; if (top.finish_pos === 1) topWins++; }
+    rows.forEach(r => {
+      if (r.value_flag && r.market_price > 1) { const st = 100 / (r.market_price - 1); vN++; vSt += st; if (r.finish_pos === 1) { vW++; vPl += 100; } else vPl -= st; }
+      const rt = rated(race, r);
+      if (rt) bestRuns.push({ race, r, rt, l: lengthsVsPar(rt, race) });
+      const h = H[race.race_id + '|' + r.horse_name] || {};
+      const from = h.pos_800 || h.settle_pos;
+      if (from && r.finish_pos && from - r.finish_pos >= 4) movers.push({ race, r, from, gain: from - r.finish_pos, at: h.pos_800 ? '800m' : 'settling' });
+      const m = r.margin !== null && r.margin !== undefined ? Math.abs(r.margin) : null;
+      const reasons = [];
+      if (r.finish_pos > 1 && rt && race.form_par && rt >= race.form_par) reasons.push(`ran ${num(rt, 1)}, at or above the winning par`);
+      if (r.finish_pos > 1 && r.finish_pos <= 4 && m !== null && m <= 1.5 && (r.result_bsp || r.result_sp || 0) >= 6) reasons.push(`beaten ${num(m, 1)}L at ${money(r.result_bsp || r.result_sp)}`);
+      if (from && r.finish_pos > 1 && from - r.finish_pos >= 5 && m !== null && m <= 3) reasons.push(`made ${from - r.finish_pos} spots from the ${h.pos_800 ? '800m' : 'settle'}`);
+      if (h.stewards_comment && EXCUSE_RE.test(h.stewards_comment) && r.finish_pos > 1 && m !== null && m <= 4) reasons.push('had an excuse (stewards)');
+      if (reasons.length) follow.push({ race, r, reasons, score: reasons.length * 10 - (m || 0) });
+    });
+    if (win) {
+      winners.push({ race, win, spFav, top, ourRank: book.indexOf(win) + 1 });
+      if ((win.result_bsp || win.result_sp || 0) >= 15) upsets.push({ race, r: win });
+    }
+    if (spFav && spFav.finish_pos > 1) beatenFavs.push({ race, r: spFav });
+  });
+  bestRuns.sort((a, b) => (b.l ?? -99) - (a.l ?? -99) || b.rt - a.rt);
+  movers.sort((a, b) => b.gain - a.gain);
+  follow.sort((a, b) => b.score - a.score);
+  upsets.sort((a, b) => (b.r.result_bsp || b.r.result_sp) - (a.r.result_bsp || a.r.result_sp));
+  const n = done.length;
+  const tile = (label, val, sub = '', tone = 'text-white') => `<div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-4"><div class="text-[10px] text-gray-500 uppercase tracking-widest">${label}</div><div class="text-2xl font-black font-mono-numbers ${tone} mt-1">${val}</div><div class="text-[11px] text-gray-500">${sub}</div></div>`;
+  const card = (title, sub, body) => `<div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-5 shadow-2xl"><h3 class="text-white font-black text-lg">${title}</h3>${sub ? `<p class="text-[11px] text-gray-500 mb-2">${sub}</p>` : ''}${body}</div>`;
+  const horseBtn = r => `<button class="text-white font-bold hover:text-[#ff6600]" onclick='openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${esc(r.horse_name)}</button>`;
+  const winRows = winners.map(w => `
+    <tr class="border-t border-[#1e2638]">
+      <td class="py-2 pr-3 text-[#ff6600] font-bold whitespace-nowrap">${tag(w.race)}</td>
+      <td class="pr-3 text-gray-400 whitespace-nowrap">${w.race.distance}m ${esc(w.race.class_name || '')}</td>
+      <td class="pr-3">${horseBtn(w.win)}</td>
+      <td class="px-2 text-right">${money(w.win.result_sp)}</td><td class="px-2 text-right">${money(w.win.result_bsp)}</td>
+      <td class="px-2 text-right text-[#ffa366]">${money(w.win.fair_price)}</td>
+      <td class="px-2 text-center ${w.ourRank === 1 ? 'text-emerald-400 font-bold' : w.ourRank <= 3 ? 'text-amber-300' : 'text-gray-400'}">${w.ourRank > 0 ? ordinalTxt(w.ourRank) : '–'}</td>
+      <td class="px-2 text-right">${num(w.win.margin, 1)}L</td>
+      <td class="pl-3 text-gray-300 whitespace-nowrap">${w.spFav ? `${esc(w.spFav.horse_name)} <span class="text-gray-500">${money(w.spFav.result_sp)} → ${ordinalTxt(w.spFav.finish_pos)}</span>` : '–'}</td>
+    </tr>`).join('');
+  const hasRatings = bestRuns.length > 0, hasInRun = hist.some(h => h.pos_800 || h.settle_pos);
+  box.innerHTML = `
+    <div class="flex flex-wrap items-end justify-between gap-2">
+      <div><h2 class="text-white font-black text-2xl uppercase tracking-widest">Day review: ${esc(S.date)}</h2>
+        <div class="text-[11px] text-gray-500">${meets.map(m => esc(m.track)).join(' · ')} · ${n} of ${races.length} races resulted</div></div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      ${tile('Favourites won', `${favWins}/${n}`, `${Math.round(favWins / n * 100)}% (normal is about 33%)`)}
+      ${tile('Our top pick won', `${topWins}/${n}`, `expected ${num(topExp, 1)} from our prices`, topWins >= topExp ? 'text-emerald-400' : 'text-white')}
+      ${tile('Value flags won', `${vW}/${vN}`, vN ? `${vPl >= 0 ? '+' : '−'}$${num(Math.abs(vPl), 0)} on $${num(vSt, 0)} staked` : 'no flags on the day', vPl > 0 ? 'text-emerald-400' : vPl < 0 ? 'text-red-400' : 'text-white')}
+      ${tile('Average winning SP', money(winners.reduce((a, w) => a + (w.win.result_sp || 0), 0) / Math.max(1, winners.length)), 'starting price')}
+      ${tile('$15+ winners', upsets.length, upsets.length ? upsets.map(u => esc(u.r.horse_name)).slice(0, 2).join(', ') : '')}
+      ${tile('Beaten favourites', beatenFavs.length, `${n - favWins} races`)}
+    </div>
+    ${card('Every winner', 'Our price and where our book had the winner (1st = our top pick). Favourite = shortest starting price.', `
+      <div class="overflow-x-auto"><table class="w-full font-mono-numbers text-xs">
+        <thead class="text-gray-500 uppercase text-[10px]"><tr><th class="text-left py-2">Race</th><th class="text-left">Trip / class</th><th class="text-left font-sans">Winner</th><th class="text-right px-2">SP</th><th class="text-right px-2">BSP</th><th class="text-right px-2">Our price</th><th class="px-2">Our rank</th><th class="text-right px-2">Margin</th><th class="text-left pl-3">Favourite</th></tr></thead>
+        <tbody>${winRows}</tbody></table></div>`)}
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      ${card('Highest-rated runs', 'Form King rating for the run, in lengths against the winning par for that race.', hasRatings ? bestRuns.slice(0, 10).map(x => `
+        <div class="flex flex-wrap justify-between gap-2 py-2 border-t border-[#1e2638] text-xs"><span>${horseBtn(x.r)} <span class="text-gray-500">${tag(x.race)} · ${ordinalTxt(x.r.finish_pos)}</span></span>
+          <span class="font-mono-numbers"><b class="${x.l !== null && x.l >= 0 ? 'text-emerald-400' : x.l !== null && x.l >= -2 ? 'text-amber-300' : 'text-red-400'}">${num(x.rt, 1)}</b> <span class="text-gray-500">${x.l === null ? '' : (x.l >= 0 ? '+' : '') + x.l.toFixed(1) + 'L vs par'}</span></span></div>`).join('')
+        : '<div class="text-sm text-gray-400 py-2">Ratings for these runs aren\'t in yet. Form King adds the rating (and the stewards report and in-run positions) to a horse\'s record after the meeting; we pick them up as each runner\'s next card is pulled, so this fills in over the following days.</div>')}
+      ${card('Made the most ground', 'Positions gained from the 800m (or from where it settled) to the finish.', hasInRun && movers.length ? movers.slice(0, 10).map(x => `
+        <div class="flex flex-wrap justify-between gap-2 py-2 border-t border-[#1e2638] text-xs"><span>${horseBtn(x.r)} <span class="text-gray-500">${tag(x.race)}</span></span>
+          <span class="font-mono-numbers text-gray-300">${ordinalTxt(x.from)} at the ${x.at} → <b class="text-white">${ordinalTxt(x.r.finish_pos)}</b> <span class="text-emerald-400">(+${x.gain})</span></span></div>`).join('')
+        : '<div class="text-sm text-gray-400 py-2">In-run positions come with the rating, a few days after the meeting. Until then this stays empty.</div>')}
+    </div>
+    ${card('Horses to follow', 'From everything we hold on the day: ran to a winning rating but beaten, roughies beaten narrowly, big ground made, and excuses. The Pattern Lab shows the market over-bets eye-catching losers, so follow the price, not just the horse.', follow.length ? `
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">${follow.slice(0, 16).map(x => `
+        <div class="py-2 border-t border-[#1e2638] text-xs">${horseBtn(x.r)} <span class="text-gray-500">${tag(x.race)} · ${ordinalTxt(x.r.finish_pos)}</span>
+          <div class="text-gray-300 mt-0.5">${x.reasons.map(esc).join(' · ')}</div></div>`).join('')}</div>` : '<div class="text-sm text-gray-400 py-2">Nobody stands out yet. More appear as ratings and in-run data land.</div>')}
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      ${card('Upsets', 'Winners at $15+ starting price.', upsets.map(x => `<div class="py-2 border-t border-[#1e2638] text-xs">${horseBtn(x.r)} <span class="text-gray-500">${tag(x.race)}</span> <span class="font-mono-numbers text-white">${money(x.r.result_sp)}</span> <span class="text-gray-500">(BSP ${money(x.r.result_bsp)}, our price ${money(x.r.fair_price)})</span></div>`).join('') || '<div class="text-sm text-gray-500 py-2">None.</div>')}
+      ${card('Beaten favourites', '', beatenFavs.map(x => `<div class="py-2 border-t border-[#1e2638] text-xs">${horseBtn(x.r)} <span class="text-gray-500">${tag(x.race)}</span> <span class="font-mono-numbers">${money(x.r.result_sp)} → ${ordinalTxt(x.r.finish_pos)}, ${num(Math.abs(x.r.margin ?? 0), 1)}L</span></div>`).join('') || '<div class="text-sm text-gray-500 py-2">Every favourite won.</div>')}
+    </div>
+    <div class="bg-[#0d1117] border border-[#1e2638] rounded-xl p-4 text-[11px] text-gray-400">
+      <b class="text-gray-300">Sectionals (last 200/400/600/800m):</b> Form King doesn't supply individual sectional times, only the overall race time, so they can't be shown honestly from this feed. Racing.com publishes them per race; I can bring those in if you want them (see the note in chat).
+    </div>`;
+}
+function ordinalTxt(n) { return !n ? '–' : n + (['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : (n % 10 < 4 ? n % 10 : 0)]); }

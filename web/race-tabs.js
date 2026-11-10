@@ -84,6 +84,7 @@ function renderRaceTab(race) {
   const tab = S.raceTab || 'odds';
   document.querySelectorAll('#raceTabs .rt-btn').forEach(b => b.classList.toggle('active', b.dataset.rt === tab));
   ['odds', 'map', 'worm', 'track'].forEach(t => document.getElementById('rt-' + t).classList.toggle('hidden', t !== tab));
+  if (tab === 'odds') renderLadder(race);
   if (tab === 'map') { renderTrackProfile(race); renderSpeedMap(race); }
   if (tab === 'worm') renderWorm(race);
   if (tab === 'track') renderTrackStats(race);
@@ -148,10 +149,15 @@ function renderWorm(race) {
   const draw = (s, hiOn) => {
     if (s.pts.length < 1) return '';
     const d = s.pts.map((q, j) => `${j ? 'L' : 'M'}${X(q.k).toFixed(1)},${Y(q.v).toFixed(1)}`).join(' ');
-    let out = `<path d="${d}" fill="none" stroke="${hiOn ? s.col : '#4b5563'}" stroke-width="${hiOn ? 3 : 1.2}" opacity="${hiOn ? 1 : .45}"><title>${esc(s.r.horse_name)}</title></path>`;
+    const nameTip = esc(`${s.r.saddlecloth ?? ''}. ${s.r.horse_name} · ${money(s.r._fair)} true`);
+    let out = `<path d="${d}" fill="none" stroke="${hiOn ? s.col : '#4b5563'}" stroke-width="${hiOn ? 3 : 1.2}" opacity="${hiOn ? 1 : .45}"/>
+      <path d="${d}" fill="none" stroke="transparent" stroke-width="12" data-tip="${nameTip}" style="cursor:pointer" onclick="wormToggle(${JSON.stringify(s.r.horse_name).replace(/"/g, '&quot;')})"/>`;
     s.pts.forEach(q => {
-      out += `<circle cx="${X(q.k)}" cy="${Y(q.v)}" r="${hiOn ? 4.5 : 2.5}" fill="${hiOn ? (q.x.pos === 1 ? '#fff' : s.col) : '#4b5563'}" stroke="${hiOn ? s.col : 'none'}" stroke-width="2" opacity="${hiOn ? 1 : .5}">
-        <title>${esc(s.r.horse_name)}: ${esc(q.x.date || '')} ${esc(q.x.track || '')} ${q.x.dist ?? ''}m · ${q.x.pos ?? ''}/${q.x.field ?? ''} · rating ${num(q.v, 1)}${q.x.prep ? ' · run ' + q.x.prep + ' of prep' : ''}</title></circle>`;
+      const lv = lengthsVsPar(q.v, race);
+      const tip = `${s.r.horse_name}: ${q.x.date || ''} ${q.x.track || ''} ${q.x.dist ?? ''}m · ${q.x.pos ?? ''}/${q.x.field ?? ''} · rating ${num(q.v, 1)}` +
+        (lv === null ? '' : ` (${lv >= 0 ? '+' : ''}${lv.toFixed(1)}L vs par)`) + (q.x.prep ? ` · run ${q.x.prep} of prep` : '');
+      out += `<circle cx="${X(q.k)}" cy="${Y(q.v)}" r="${hiOn ? 4.5 : 2.5}" fill="${hiOn ? (q.x.pos === 1 ? '#fff' : s.col) : '#4b5563'}" stroke="${hiOn ? s.col : 'none'}" stroke-width="2" opacity="${hiOn ? 1 : .5}"/>
+        <circle cx="${X(q.k)}" cy="${Y(q.v)}" r="10" fill="transparent" data-tip="${esc(tip)}"/>`;
     });
     if (hiOn) { const l = s.pts[0]; labels.push({ x: X(l.k) + 8, y: Y(l.v) + 4, col: s.col, t: `${s.r.saddlecloth ?? ''}. ${shortName(s.r.horse_name)}` }); }
     return out;
@@ -272,5 +278,65 @@ async function renderTrackStats(race) {
           return `<span class="px-2 py-1 rounded border ${tone} text-xs font-mono-numbers" title="${g ? esc(g.bucket) + ' IV ' + num(iv, 2) : ''}">b${r.barrier} ${esc(shortName(r.horse_name))} · ${esc(zoneShort(r.map_zone) || '–')}</span>`; }).join('')}</div>
       </div>
       <p class="text-[10px] text-gray-500">Impact value (IV) = winners from a group ÷ the winners it would have if every gate or position had an equal chance. Only winners are counted, so it isn't skewed by which losers are in the history. ${railN < races ? 'Rail position only goes back to the meetings the engine has pulled itself (from Nov 2026), so the rail filter fills in over the coming months.' : ''}</p>
+    </div>`;
+}
+
+
+// ---------------------------------------------------------------- lengths ladder
+// How many lengths each runner has to find on the favourite (and on the top
+// rated), from its last start, its last-3 average, or today's expected run.
+function ladderValue(r, race, basis) {
+  if (basis === 'form') return r.form_gap_l ?? null;                  // already lengths vs par
+  const xs = parseJSON(r.last_runs, []).map(x => x.rating).filter(v => v);
+  if (!xs.length) return null;
+  const v = basis === 'last' ? xs[0] : xs.slice(0, 3).reduce((a, b) => a + b, 0) / Math.min(3, xs.length);
+  return v * lppFor(race.distance, race);                              // ratings -> lengths scale
+}
+function renderLadder(race) {
+  const box = document.getElementById('lengthsLadder'); if (!box) return;
+  const basis = S.ladderBasis || 'last';
+  const rows = (S.runners[race.race_id] || []).filter(r => !r._scratched && !r.scratched)
+    .map(r => ({ r, v: ladderValue(r, race, basis), px: r._market || r.market_price }))
+    .sort((a, b) => (a.px || 999) - (b.px || 999));
+  const rated = rows.filter(x => x.v !== null);
+  if (!rated.length) { box.innerHTML = ''; return; }
+  const fav = rows.find(x => x.v !== null && x.px) || rated[0];
+  const top = rated.slice().sort((a, b) => b.v - a.v)[0];
+  const second = rated.slice().sort((a, b) => b.v - a.v)[1];
+  const lab = { last: 'last start', avg3: 'average of the last 3 runs', form: "today's expected run (Form L)" }[basis];
+  const L = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + 'L';
+  const maxGap = Math.max(1, ...rated.map(x => top.v - x.v));
+  let head = `On ${lab}, <b class="text-white">${esc(top.r.horse_name)}</b> is the top-rated`;
+  if (second) head += `, <b class="text-emerald-400">${(top.v - second.v).toFixed(1)}L</b> clear of ${esc(second.r.horse_name)}`;
+  head += '.';
+  if (fav && fav !== top) head += ` The favourite, <b class="text-white">${esc(fav.r.horse_name)}</b> (${money(fav.px)}), has <b class="text-amber-300">${(top.v - fav.v).toFixed(1)}L</b> to find on it.`;
+  else if (fav) head += ' The favourite is also the top-rated.';
+  const btn = (k, l) => `<button onclick="S.ladderBasis='${k}';renderLadder(S.races.find(r=>r.race_id===S.view))" class="rt-btn ${basis === k ? 'active' : ''}" style="font-size:10px;padding:5px 10px">${l}</button>`;
+  box.innerHTML = `
+    <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-5 shadow-2xl">
+      <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+        <h2 class="text-white font-black text-lg">Lengths to find</h2>
+        <div class="flex flex-wrap gap-2">${btn('last', 'Last start')}${btn('avg3', 'Last 3 average')}${btn('form', "Today's form")}</div>
+      </div>
+      <p class="text-sm text-gray-300 mb-3">${head}</p>
+      <div class="overflow-x-auto"><table class="w-full font-mono-numbers text-xs">
+        <thead class="text-gray-500 uppercase text-[10px]"><tr>
+          <th class="text-left py-2">Price</th><th class="text-left font-sans">Horse</th>
+          <th class="text-right px-2" title="Lengths behind (−) or ahead (+) of the favourite">vs favourite</th>
+          <th class="text-right px-2" title="Lengths behind the top-rated runner">vs top-rated</th>
+          <th class="px-3 w-1/3"></th></tr></thead>
+        <tbody>${rows.map(x => {
+          if (x.v === null) return `<tr class="border-t border-[#1e2638]"><td class="py-2">${money(x.px)}</td><td class="font-sans text-gray-400">${x.r.saddlecloth ?? ''}. ${esc(x.r.horse_name)}</td><td colspan="3" class="text-gray-600 px-2">no rated runs</td></tr>`;
+          const vf = x.v - fav.v, vt = x.v - top.v;
+          const w = Math.max(2, (1 - (top.v - x.v) / maxGap) * 100);
+          const col = vt >= -0.05 ? '#10b981' : vt >= -2 ? '#f59e0b' : '#ef4444';
+          return `<tr class="border-t border-[#1e2638] ${x === fav ? 'bg-[#ff6600]/5' : ''}">
+            <td class="py-2 text-white">${money(x.px)}${x === fav ? ' <span class="text-[#ff6600] text-[10px]">FAV</span>' : ''}</td>
+            <td class="font-sans text-white font-bold">${x.r.saddlecloth ?? ''}. ${esc(x.r.horse_name)}</td>
+            <td class="text-right px-2 ${x === fav ? 'text-gray-500' : vf >= 0 ? 'text-emerald-400' : 'text-gray-300'}">${x === fav ? '–' : L(vf)}</td>
+            <td class="text-right px-2 ${vt >= -0.05 ? 'text-emerald-400 font-bold' : vt >= -2 ? 'text-amber-300' : 'text-red-400'}">${vt >= -0.05 ? 'top' : L(vt)}</td>
+            <td class="px-3"><div class="h-2 rounded bg-[#0d1117]"><div class="h-2 rounded" style="width:${w}%;background:${col}"></div></div></td></tr>`; }).join('')}</tbody>
+      </table></div>
+      <p class="text-[10px] text-gray-500 mt-2">Ordered by price. Rating gaps are turned into lengths at ${lppFor(race.distance, race).toFixed(2)} lengths per rating point for ${race.distance}m (fitted from horses that met in the same race). Ratings already allow for weight and age on the day they were run; today's weights aren't in them.</p>
     </div>`;
 }

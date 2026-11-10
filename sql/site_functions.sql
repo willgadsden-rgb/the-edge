@@ -141,3 +141,19 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.edge_track_stats(text, integer, integer, text, text) TO anon, authenticated;
+
+-- Meeting Review: what the history holds for a set of races (in-run positions,
+-- the Form King rating and stewards report arrive here as each runner's later
+-- cards are pulled; finish/margins/prices land on the night of the race).
+CREATE OR REPLACE FUNCTION public.edge_race_runs(p_race_ids text[])
+RETURNS TABLE (race_id text, horse_name text, finish_pos integer, margin double precision,
+               wfa_rating double precision, settle_pos integer, pos_800 integer, pos_400 integer,
+               field_size integer, sp double precision, bsp double precision, stewards_comment text, source text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
+  SELECT r.race_id, r.horse_name, r.finish_pos, r.margin, NULLIF(r.wfa_rating, 0), r.settle_pos, r.pos_800,
+         r.pos_400, r.field_size, r.sp, r.bsp, r.stewards_comment, r.source
+  FROM edge.runs r
+  WHERE r.race_id = ANY (p_race_ids)
+$$;
+
+GRANT EXECUTE ON FUNCTION public.edge_race_runs(text[]) TO anon, authenticated;

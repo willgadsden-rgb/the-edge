@@ -174,6 +174,7 @@
               </table>
             </div>
           </div>
+          <div id="lengthsLadder"></div>
           <p class="text-[11px] text-gray-500">Click a runner for its last runs and stewards' comments. Prices re-calculate when you refresh them; scores update when you Sync.</p>
           </div>
         </div>
@@ -182,7 +183,8 @@
       <!-- MEETING REVIEW -->
       <section id="section-results" class="hidden space-y-6">
         <div id="pastRacesNav" class="flex gap-2 border-b border-[#1e2638] pb-4 overflow-x-auto"></div>
-        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl p-6">
+        <div id="reviewAllView" class="hidden space-y-6"></div>
+        <div id="reviewRaceView" class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl p-6">
           <h2 class="text-white font-black text-xl mb-1 uppercase tracking-widest">Result review</h2>
           <p id="reviewNote" class="text-[11px] text-gray-500 mb-4">Results arrive with the night sync (about 11:30pm) or when you press Sync after racing.</p>
           <div id="reviewSummary" class="mb-5"></div>
@@ -232,6 +234,9 @@
         <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 space-y-3 text-sm text-gray-300 max-w-3xl">
           <h2 class="text-white font-black text-xl uppercase tracking-widest">How to read it</h2>
           <p><b class="text-white">Form L</b>: the horse's expected run today in lengths against the typical winner of this class at this level of track (metro, provincial, country). <b class="text-emerald-400">Green</b> 0 or better = good enough to win. <b class="text-amber-300">Yellow</b> = within 2 lengths under: around the mark, needs a little improvement or a soft race. <b class="text-red-400">Red</b> = more than 2 lengths under. So &minus;2.3L means it rates about 2&frac13; lengths behind a typical winner of today's race.</p>
+          <p><b class="text-white">Next to the name</b>: its average rating over the last 5 rated runs (in brackets), the Pattern Lab angles (▲ market under-rates, ▼ over-rates), and today's track condition: <b class="text-emerald-400">✓</b> suited (wins 25%+ or places half the time there, or rates 2+ points better there), <b class="text-amber-300">~</b> fair, <b class="text-red-400">✗</b> poor (3+ runs there without a win and rarely placing), <b>?</b> never raced on it. Click the horse for its full dry / soft / heavy / synthetic record.</p>
+          <p><b class="text-white">Lengths to find</b>: under the Odds Matrix. Every runner in price order with how many lengths it is behind (or ahead of) the favourite and the top-rated, on its last start, its last-3 average or today's expected run.</p>
+          <p><b class="text-white">Meeting Review → ALL</b>: the whole day across every meeting: winners with our price and rank, favourites and our top picks, value-flag P&amp;L, highest-rated runs, ground made, horses to follow, upsets and beaten favourites.</p>
           <p><b class="text-white">Rated runs</b>: the small boxes under each horse are its last 5 Form King ratings, oldest to newest (last start on the right, <sup>w</sup> = won), coloured the same way against today's winning par. Hover a box for the run and how many lengths it was off the par.</p>
           <p><b class="text-white">Ratings to lengths</b>: one rating point is worth about 0.47 lengths at 1000m, 0.55L at 1250m, 0.61L at 1550m, 0.67L at 1900m and 0.74L at 2400m (fitted from horses that met in the same race). So 82.1 vs 74.7 (7.4 points) is roughly 4 lengths at 1200m, 4&frac12; at 1600m and 5 at 2000m. Ratings already allow for the weight carried and age on the day they were run.</p>
           <p><b class="text-white">Ceiling</b> — its best relevant recent run on the same scale. A big gap between Form and Ceiling means it can run well above its average.</p>
@@ -327,6 +332,7 @@
 
   // ---------- loading ----------
   async function loadMeetings(date) {
+    if (typeof REV !== 'undefined') REV.data = null;
     S.date = date;
     document.getElementById('calendarInput').value = date;
     const { data, error } = await sb.from('edge_meetings').select('*').eq('meeting_date', date).order('track');
@@ -450,7 +456,9 @@
 
   function renderRace(race) {
     if (!race) return;
-    const rows = (S.runners[race.race_id] || []).slice().sort((a, b) => (a._scratched - b._scratched) || ((b._p || 0) - (a._p || 0)));
+    const allRows = S.runners[race.race_id] || [];
+    const scr = allRows.filter(r => r.scratched || r._scratched).sort((a, b) => (a.saddlecloth || 99) - (b.saddlecloth || 99));
+    const rows = allRows.filter(r => !r.scratched && !r._scratched).sort((a, b) => (b._p || 0) - (a._p || 0));
     const m = S.meeting || {};
     const chip = (t, title = '') => `<span class="pill bg-[#11151d] border border-[#1e2638] text-gray-300 text-[11px] py-1" title="${esc(title)}">${t}</span>`;
     document.getElementById('raceHeader').innerHTML =
@@ -458,7 +466,8 @@
       chip(`🕒 ${melbTime(race.jump_time)}`) + chip(`📏 ${race.distance}m`) + chip(`🏷️ ${esc(race.class_name)}`) +
       chip(`🎯 Par ${num(race.form_par)}`, 'Median winning rating for this class at this level of track') +
       chip(`🌤️ ${esc(m.going || '')}`) + chip(`🛤️ ${esc(m.rail || '')}`) +
-      chip(`⚡ ${esc((race.tempo || '').toLowerCase())} tempo · ${race.leaders ?? 0} leaders`, 'From the real early speed of the field');
+      chip(`⚡ ${esc((race.tempo || '').toLowerCase())} tempo · ${race.leaders ?? 0} leaders`, 'From the real early speed of the field') +
+      (scr.length ? chip(`✂️ Scratched: ${scr.map(r => (r.saddlecloth ?? '') + ' ' + esc(r.horse_name)).join(', ')}`) : '');
     renderRaceTab(race);
     document.getElementById('modsActive').classList.toggle('hidden', !(window.EdgeMods && EdgeMods.active(race)));
     if (S._modsRace !== race.race_id) { S._modsRace = race.race_id; if (!document.getElementById('modsPanel').classList.contains('hidden')) renderMods(); }
@@ -472,7 +481,7 @@
         <tr class="runner-row ${r._scratched ? 'scratched' : ''}" onclick="toggleRow('${race.race_id}', ${JSON.stringify(r.horse_name).replace(/"/g, '&quot;')})">
           <td class="p-3 text-gray-400 font-bold">${r.saddlecloth ?? ''}</td>
           <td class="p-3 font-sans">
-            <div class="text-white font-bold"><button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" title="Open full form" onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${esc(r.horse_name)}</button> ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}</div>
+            <div class="text-white font-bold"><button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" title="Open full form" onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${esc(r.horse_name)}</button> ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}${avgBadge(r)} <span class="inline-flex flex-wrap gap-0.5 align-middle ml-1">${angleTags(r, race)}${goingTag(r, race)}</span></div>
             <div class="text-[10px] text-gray-500">${esc(r.jockey || '–')}${r.apprentice_claim ? ` (a${num(r.apprentice_claim, 1)})` : ''} · ${esc(r.trainer || '–')} · ${num(r.weight, 1)}kg</div>
             <div class="mt-1.5">${ratedRuns(r, race)}</div>
           </td>
@@ -631,7 +640,7 @@
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           ${block('Signals in the score', sigs)}
-          ${block('Angles (Pattern Lab)', ang || '<span class="text-gray-500 text-[11px]">none</span>')}
+          ${block('Angles &amp; track condition', (ang || '<span class="text-gray-500 text-[11px]">no Pattern Lab angles</span>') + goingDetail(r, race))}
         </div>
         ${block('Last runs', `<div class="overflow-x-auto"><table class="w-full text-xs">
           <thead class="text-gray-500 uppercase text-[10px]"><tr>
@@ -661,8 +670,13 @@
   function renderReview() {
     const done = S.races.filter(r => r.result_in);
     const nav = document.getElementById('pastRacesNav');
-    if (!S.reviewRace || !S.races.find(r => r.race_id === S.reviewRace)) S.reviewRace = (done[0] || S.races[0] || {}).race_id;
-    nav.innerHTML = S.races.map(r => `<button onclick="S.reviewRace='${r.race_id}';renderReview()" class="race-circle ${S.reviewRace === r.race_id ? 'active' : ''} ${r.result_in ? 'done' : ''}">R${r.race_number}</button>`).join('');
+    if (!S.reviewRace || (S.reviewRace !== 'ALL' && !S.races.find(r => r.race_id === S.reviewRace))) S.reviewRace = 'ALL';
+    nav.innerHTML = `<button onclick="S.reviewRace='ALL';renderReview()" class="race-circle ${S.reviewRace === 'ALL' ? 'active' : ''}" title="Every meeting on this date">ALL</button>` +
+      S.races.map(r => `<button onclick="S.reviewRace='${r.race_id}';renderReview()" class="race-circle ${S.reviewRace === r.race_id ? 'active' : ''} ${r.result_in ? 'done' : ''}">R${r.race_number}</button>`).join('');
+    const allMode = S.reviewRace === 'ALL';
+    document.getElementById('reviewAllView').classList.toggle('hidden', !allMode);
+    document.getElementById('reviewRaceView').classList.toggle('hidden', allMode);
+    if (allMode) { renderReviewAll(); return; }
     const race = S.races.find(r => r.race_id === S.reviewRace);
     const body = document.getElementById('reviewBody');
     renderReviewSummary();
