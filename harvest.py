@@ -503,9 +503,11 @@ def audit_window(db, date_from, date_to, cap, fix=True):
         done, failed, done * 5, max(0, len(missing) - cap)))
     # Say plainly what the website holds now, date by date.
     after = db.query(
-        "SELECT meeting_date, track, COUNT(*) FROM public.edge_races "
-        "WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date, track "
-        "ORDER BY meeting_date DESC, track", (date_from, date_to))
+        "SELECT pr.meeting_date, COALESCE(pm.track, pr.meeting_id), COUNT(*) "
+        "FROM public.edge_races pr LEFT JOIN public.edge_meetings pm ON pm.meeting_id = pr.meeting_id "
+        "WHERE pr.meeting_date >= ? AND pr.meeting_date <= ? "
+        "GROUP BY pr.meeting_date, COALESCE(pm.track, pr.meeting_id) "
+        "ORDER BY pr.meeting_date DESC, 2", (date_from, date_to))
     print("On the website now: {} meetings".format(len(after)))
     for d, track, n in after:
         print("  {} {:<22} {} races".format(d, track, n))
