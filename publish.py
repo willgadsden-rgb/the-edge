@@ -35,7 +35,7 @@ VALUE_ODDS = (2.20, 18.00)    # ...and inside the odds band the app bets (roughi
 FROZEN_AFTER_RESULT = ("projected", "signals", "p_model", "p_market", "p_blend", "fair_price",
                        "market_price", "best_price", "edge_pct", "mao", "value_flag", "stake",
                        "settle_rank", "map_zone", "map_lane", "map_tag", "form_gap_l", "ceiling_gap_l",
-                       "form_confidence", "form_runs")
+                       "form_confidence", "form_runs", "v2_static")
 
 SITE_FUNCTIONS = Path(__file__).resolve().parent / "sql" / "site_functions.sql"
 
@@ -52,6 +52,7 @@ PUB_TABLES = {
                  ("race_number", "INTEGER"), ("race_name", "TEXT"), ("distance", "INTEGER"),
                  ("class_name", "TEXT"), ("class_group", "TEXT"), ("form_par", "REAL"),
                  ("jump_time", "TEXT"), ("field_size", "INTEGER"), ("tempo", "TEXT"), ("lengths_per_point", "REAL"),
+                 ("model_version", "TEXT"), ("v2_mkt", "REAL"),
                  ("leaders", "INTEGER"), ("market_weight", "REAL"), ("commission", "REAL"),
                  ("betfair_market_id", "TEXT"), ("result_in", "INTEGER"), ("published_at", "TEXT")],
     },
@@ -72,7 +73,7 @@ PUB_TABLES = {
                  ("value_flag", "INTEGER"), ("stake", "REAL"), ("flucs", "TEXT"), ("last_runs", "TEXT"),
                  ("finish_pos", "INTEGER"), ("margin", "REAL"), ("result_bsp", "REAL"),
                  ("result_sp", "REAL"), ("result_rating", "REAL"), ("result_comment", "TEXT"),
-                 ("published_at", "TEXT"), ("scratched", "INTEGER"), ("going_form", "TEXT")],
+                 ("published_at", "TEXT"), ("scratched", "INTEGER"), ("going_form", "TEXT"), ("v2_static", "REAL")],
     },
 }
 
@@ -275,6 +276,40 @@ def publish_card(db, card, model=None, published_at=None):
               "effective_odds": effective_odds(e["market_odds"], commission) if e["market_odds"] else None}
              for e, _, proj, _, _ in scored], market_weight=MARKET_WEIGHT)
 
+        # Model v2 (fitted on results, see model_v2.py) replaces the 70/30 blend
+        # once it has beaten the market on races it never saw. It needs a price
+        # for every runner (the market is one of its inputs).
+        v2 = getattr(model, "v2", None) if model is not None else None
+        v2_static, v2_on = {}, False
+        if v2 and v2.get("validated") and all((e.get("market_odds") or 0) > 1 for e, _, _, _, _ in scored):
+            try:
+                import math
+                import model_v2
+                for e, _, _, _, _ in scored:
+                    prof = e.get("fk_profile") or {}
+                    f = model_v2.runner_features(model, e["horse_name"], {
+                        "distance": race["distance"], "going": cond, "class_label": race["class_name"],
+                        "track": track, "race_date": mdate, "barrier": e.get("barrier"),
+                        "field_size": len(scored), "prep": e.get("prep_run_num"),
+                        "days_since": prof.get("days_since_run")})
+                    v2_static[e["horse_name"]] = model_v2.static_logit(v2, f)
+                z = {n: v2_static[n] + v2["market_coef"] * math.log(1.0 / e["market_odds"])
+                     for n, e in ((e["horse_name"], e) for e, _, _, _, _ in scored)}
+                top = max(z.values())
+                wts = {n: math.exp(v - top) for n, v in z.items()}
+                tot = sum(wts.values())
+                for e, _, _, _, _ in scored:
+                    n = e["horse_name"]
+                    p = wts[n] / tot
+                    fair = round(1.0 / p, 2)
+                    eff = effective_odds(e["market_odds"], commission)
+                    book[n] = dict(book.get(n, {}), p_blended=p, my_price=fair,
+                                   edge_pct=(eff / fair - 1.0) * 100.0)
+                v2_on = True
+            except Exception as exc:
+                print("Model v2 skipped for {}: {}".format(race_id, exc))
+                v2_static, v2_on = {}, False
+
         par = None
         if model is not None:
             try:
@@ -328,6 +363,7 @@ def publish_card(db, card, model=None, published_at=None):
                 "result_rating": fk._as_float(res.get("weightForAgeRating")) if res else None,
                 "result_comment": (res.get("stewardsComment") or None) if res else None,
                 "published_at": published_at,
+                "v2_static": round(v2_static[name], 5) if name in v2_static else None,
             })
             if res:
                 # Race is over: keep the pre-race book (the upsert keeps the stored
@@ -359,6 +395,7 @@ def publish_card(db, card, model=None, published_at=None):
             "field_size": len(scored), "tempo": tempo_tier, "leaders": n_leaders,
             "market_weight": MARKET_WEIGHT, "commission": commission, "betfair_market_id": betfair,
             "result_in": result_in, "published_at": published_at,
+            "model_version": "v2" if v2_on else "blend", "v2_mkt": v2["market_coef"] if v2_on else None,
         })
 
     for row in e_rows:
@@ -375,7 +412,15 @@ def load_model(db):
     try:
         import form_model
         hist = form_model.load_history(db)
-        return form_model.FormModel(hist) if len(hist) else None
+        if not len(hist):
+            return None
+        m = form_model.FormModel(hist)
+        try:
+            import model_v2
+            m.v2 = model_v2.load(db)
+        except Exception:
+            m.v2 = None
+        return m
     except Exception as exc:
         print("Form model unavailable: {}".format(re.sub(r":[^:@\s]+@", ":****@", str(exc))))
         return None

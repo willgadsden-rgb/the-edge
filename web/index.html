@@ -307,7 +307,16 @@
     let raw = {}, rawTot = 0;
     active.forEach(r => { const m = mkt(r); if (m && m > 1) { raw[r.horse_name] = 1 / m; rawTot += 1 / m; } });
     const blend = {}; let bTot = 0;
-    active.forEach(r => {
+    // Model v2 (fitted on results): score = runner's form part + market weight x log(1/price),
+    // then re-normalised over the field. Same maths as publish.py; modifiers add points / 8.
+    const useV2 = race.model_version === 'v2' && race.v2_mkt && active.length &&
+      active.every(r => r.v2_static !== null && r.v2_static !== undefined && mkt(r) > 1);
+    race._v2 = useV2;
+    if (useV2) {
+      const z = {}; let top = -Infinity;
+      active.forEach(r => { const mod = r._mod ? r._mod.total : 0; z[r.horse_name] = r.v2_static + race.v2_mkt * Math.log(1 / mkt(r)) + mod / 8; top = Math.max(top, z[r.horse_name]); });
+      active.forEach(r => { blend[r.horse_name] = Math.exp(z[r.horse_name] - top); bTot += blend[r.horse_name]; });
+    } else active.forEach(r => {
       const model = pmTot > 0 ? pm[r.horse_name] / pmTot : 0;
       const market = rawTot > 0 && raw[r.horse_name] ? raw[r.horse_name] / rawTot : null;
       const b = market === null ? model : (rawTot > 0 ? w : 0) * market + (1 - (rawTot > 0 ? w : 0)) * model;
@@ -467,6 +476,7 @@
       chip(`🎯 Par ${num(race.form_par)}`, 'Median winning rating for this class at this level of track') +
       chip(`🌤️ ${esc(m.going || '')}`) + chip(`🛤️ ${esc(m.rail || '')}`) +
       chip(`⚡ ${esc((race.tempo || '').toLowerCase())} tempo · ${race.leaders ?? 0} leaders`, 'From the real early speed of the field') +
+      (race._v2 ? chip('🧠 Model v2', 'Prices from the model fitted on results (form signals on top of the market), re-normalised to a 100% book') : chip('⚖️ 70/30 blend', 'Prices from the 70% market / 30% form-model blend')) +
       (scr.length ? chip(`✂️ Scratched: ${scr.map(r => (r.saddlecloth ?? '') + ' ' + esc(r.horse_name)).join(', ')}`) : '');
     renderRaceTab(race);
     document.getElementById('modsActive').classList.toggle('hidden', !(window.EdgeMods && EdgeMods.active(race)));

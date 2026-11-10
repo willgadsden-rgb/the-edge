@@ -1,3 +1,5 @@
+CREATE TABLE IF NOT EXISTS edge.model_params (name TEXT PRIMARY KEY, fitted_at TEXT, params_json TEXT);
+
 -- Read-only functions the website calls (Supabase RPC). SECURITY DEFINER so the
 -- anon key can read the edge history through them without table access.
 
@@ -157,3 +159,13 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.edge_race_runs(text[]) TO anon, authenticated;
+
+
+-- The fitted model's report (Pattern Lab shows it).
+CREATE OR REPLACE FUNCTION public.edge_model_report(p_name text DEFAULT 'v2')
+RETURNS TABLE (name text, fitted_at text, params_json text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
+  SELECT name, fitted_at, params_json FROM edge.model_params WHERE name = p_name
+$$;
+
+GRANT EXECUTE ON FUNCTION public.edge_model_report(text) TO anon, authenticated;

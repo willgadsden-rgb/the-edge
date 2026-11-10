@@ -590,6 +590,37 @@ async function loadLab() {
   }
   renderLab(rows);
 }
+async function modelCard() {
+  let p = null;
+  try { const { data, error } = await sb.rpc('edge_model_report', { p_name: 'v2' }); if (!error && data && data[0]) p = JSON.parse(data[0].params_json); } catch (e) {}
+  const el = document.getElementById('modelCard'); if (!el) return;
+  if (!p) { el.innerHTML = '<div class="text-sm text-gray-400">Model v2 hasn\'t been fitted yet.</div>'; return; }
+  const o = p.overlays || {}, b = p.all_in_band || {}, u = p.unders || {};
+  const DESC = { mkt: 'Market price', gap_l: 'Form L (rating vs par)', no_form: 'No rated runs', rel: 'Depth of form', last_l: 'Last start vs par',
+    best3_l: 'Best of last 3 vs par', trend: 'Ratings trend', won_last: 'Won last start', close_last: 'Just beaten last start', excuse_last: 'Excuse last start',
+    up_trip: 'Up 200m+ in trip', down_trip: 'Down 200m+ in trip', first_up: '1st-up', second_up: '2nd-up', third_up: '3rd-up', log_days: 'Days since last run',
+    going_suit: 'Suited by today\'s going', unraced_going: 'Unraced on today\'s going', early: 'Settles back (vs leads)', barrier_frac: 'Wide barrier' };
+  const imp = Object.entries(p.importance_per_sd || {}).filter(([k]) => k !== 'mkt').sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const mx = Math.max(0.01, ...imp.map(([, v]) => Math.abs(v)));
+  const tile = (l, v, sub, tone = 'text-white') => `<div class="bg-[#0d1117] border border-[#1e2638] rounded-lg p-3"><div class="text-[10px] text-gray-500 uppercase tracking-widest">${l}</div><div class="text-xl font-black font-mono-numbers ${tone}">${v}</div><div class="text-[10px] text-gray-500">${sub}</div></div>`;
+  el.innerHTML = `
+    <div class="flex flex-wrap items-center gap-2 mb-3"><h3 class="text-white font-black text-lg">Model v2: fitted on results</h3>
+      <span class="pill ${p.validated ? 'sect-green' : 'sect-yellow'} py-1">${p.validated ? 'LIVE: PRICING THE CARDS' : 'NOT YET BEATING THE MARKET: 70/30 BLEND STILL PRICES'}</span>
+      <span class="text-[11px] text-gray-500">fitted ${esc((p.fitted_at || '').slice(0, 10))} on ${Number(p.n_all).toLocaleString()} runs</span></div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+      ${tile('Better than the market?', `${p.logloss_gain_pct >= 0 ? '+' : ''}${p.logloss_gain_pct}%`, 'log-loss on races it never saw', p.logloss_gain_pct > 0 ? 'text-emerald-400' : 'text-red-400')}
+      ${tile('Its overlays', o.n ? `A/E ${o.ae}` : '–', o.n ? `${o.n} bets · ${o.strike}% strike · ROI ${o.roi_sp}% at SP` : '', (p.overlay_ae_vs_base || 0) >= 1.03 ? 'text-emerald-400' : 'text-white')}
+      ${tile('Every runner $2.20-$18', b.n ? `A/E ${b.ae}` : '–', b.n ? `${b.n} runs · ROI ${b.roi_sp}% at SP` : '')}
+      ${tile('Its unders (fades)', u.n ? `A/E ${u.ae}` : '–', u.n ? `${u.n} runs · ROI ${u.roi_sp}% at SP` : '', (u.ae || 1) < (b.ae || 0) ? 'text-emerald-400' : 'text-white')}
+    </div>
+    <div class="text-[10px] text-gray-500 uppercase tracking-widest mb-1">What it learned (beyond the price): green = more winners than the price expects, red = fewer</div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">${imp.map(([k, v]) => `
+      <div class="flex items-center gap-2 text-xs"><span class="w-44 text-gray-300">${esc(DESC[k] || k)}</span>
+        <div class="flex-1 h-2 bg-[#0d1117] rounded relative"><div class="absolute top-0 h-2 rounded ${v >= 0 ? 'bg-emerald-500 left-1/2' : 'bg-red-500 right-1/2'}" style="width:${Math.abs(v) / mx * 50}%"></div></div>
+        <span class="w-12 text-right font-mono-numbers ${v >= 0 ? 'text-emerald-400' : 'text-red-400'}">${v >= 0 ? '+' : ''}${v.toFixed(2)}</span></div>`).join('')}</div>
+    <p class="text-[10px] text-gray-500 mt-2">Trained on runs before ${esc(p.split)}, tested on the ${Number(p.n_test).toLocaleString()} runs after. It only prices the cards once it beats the market on that unseen data (lower log-loss and its overlays winning 3%+ more than their price says, on 100+ bets). Market weight ${Number(p.market_coef).toFixed(2)} (1.00 = takes the price at face value). Refits every Monday.</p>`;
+}
+
 function renderLab(rows) {
   const box = document.getElementById('labBody');
   const live = !!(rows && rows.length);
@@ -602,7 +633,9 @@ function renderLab(rows) {
   const pct = v => v === null || v === undefined ? '–' : (v >= 1 ? '+' : '') + Math.round((v - 1) * 100) + '%';
   const verdict = i => (i.old >= 1.03 && i.recent >= 1.03) ? '<span class="pill sect-green">PROVEN: market under-rates</span>'
     : (i.old <= 0.97 && i.recent <= 0.97) ? '<span class="pill sect-red">PROVEN: market over-rates</span>' : '<span class="pill sect-yellow">NOT PROVEN</span>';
+  setTimeout(modelCard, 0);
   box.innerHTML = `
+    <div id="modelCard" class="bg-[#0d1117]/60 border border-[#1e2638] rounded-xl p-4 mb-5"><div class="text-sm text-gray-400">Loading the model…</div></div>
     <p class="text-sm text-gray-300 mb-3">Each angle compares <b class="text-white">actual winners</b> with the winners the starting price expected (A/E), against the average runner. An angle counts only when it holds up in <b class="text-white">both</b> the older and the recent half of the history. That's how a syndicate avoids betting on luck.</p>
     <div class="overflow-x-auto"><table class="w-full text-left font-mono-numbers text-xs">
       <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider"><tr>
