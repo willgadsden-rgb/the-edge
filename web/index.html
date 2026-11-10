@@ -533,7 +533,8 @@
         race.model_version === 'v3'
           ? "Prices from the model fitted on every runner in every Australian race from Betfair's own results, with our Form King ratings on top, re-normalised to a 100% book"
           : 'Prices from the model fitted on our results (form signals on top of the market), re-normalised to a 100% book') : chip('⚖️ 70/30 blend', 'Prices from the 70% market / 30% form-model blend')) +
-      (scr.length ? chip(`✂️ Scratched: ${scr.map(r => (r.saddlecloth ?? '') + ' ' + esc(r.horse_name)).join(', ')}`) : '');
+      (scr.length ? chip(`✂️ Scratched: ${scr.map(r => (r.saddlecloth ?? '') + ' ' + esc(r.horse_name)).join(', ')}`) : '') +
+      paceVerdict(race, allRows);
     renderRaceTab(race);
     document.getElementById('modsActive').classList.toggle('hidden', !(window.EdgeMods && EdgeMods.active(race)));
     if (S._modsRace !== race.race_id) { S._modsRace = race.race_id; if (!document.getElementById('modsPanel').classList.contains('hidden')) renderMods(); }

@@ -492,3 +492,39 @@ async function renderBias() {
       <p class="text-[10px] text-gray-500 mt-2">Read it the other way too: a horse that won against the bias is better than it looks, and one that got every favour is worse. Settling positions come in with the ratings, so today's run-style line fills in through the evening.</p>
     </div>`;
 }
+
+// ---------------------------------------------------------------- pace verdict
+// One line on what the tempo does to the race, and who it helps. The speed map
+// shows where they'll be; this says what that's worth.
+function paceVerdict(race, rows) {
+  const live = rows.filter(r => !r._scratched && !r.scratched);
+  if (!live.length) return '';
+  const tempo = String(race.tempo || '').toLowerCase();
+  const leaders = live.filter(r => r.map_zone === 'Leader');
+  const onPace = live.filter(r => r.map_zone === 'Leader' || r.map_zone === "Leader's Back / Box Seat" || r.map_zone === 'Handy');
+  const back = live.filter(r => r.map_zone === 'Backmarker' || r.map_zone === 'Worse Than Midfield');
+  const name = r => `${r.saddlecloth ?? ''} ${r.horse_name}`;
+  const byChance = xs => xs.slice().sort((a, b) => (b._p || 0) - (a._p || 0));
+  let verdict, helps, hurts, tone;
+  if (tempo.includes('fast') || leaders.length >= 3) {
+    verdict = leaders.length >= 3
+      ? `${leaders.length} of them want the lead, so expect pressure in front`
+      : 'the tempo shapes up fast';
+    helps = byChance(back).slice(0, 3); hurts = byChance(leaders).slice(0, 2);
+    tone = 'text-sky-300';
+  } else if (tempo.includes('slow') || leaders.length === 0) {
+    verdict = leaders.length === 0
+      ? 'nothing in the field is a natural leader, so it can crawl'
+      : 'the tempo shapes up soft';
+    helps = byChance(onPace).slice(0, 3); hurts = byChance(back).slice(0, 2);
+    tone = 'text-amber-300';
+  } else {
+    verdict = 'an even tempo, so the map matters less than the ratings';
+    helps = []; hurts = []; tone = 'text-gray-400';
+  }
+  const list = xs => xs.map(r => `<b class="text-white">${esc(name(r))}</b>`).join(', ');
+  return `<div class="mt-2 text-[11px] ${tone}">⚡ Pace read: ${verdict}.${
+    helps.length ? ` Helps ${list(helps)}.` : ''}${
+    hurts.length ? ` <span class="text-gray-400">Against ${list(hurts)}.</span>` : ''}${
+    back.length && (tempo.includes('fast') || leaders.length >= 3) ? '' : ''}</div>`;
+}
