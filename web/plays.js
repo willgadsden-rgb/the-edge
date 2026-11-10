@@ -530,3 +530,89 @@ function paceVerdict(race, rows) {
     hurts.length ? ` <span class="text-gray-400">Against ${list(hurts)}.</span>` : ''}${
     back.length && (tempo.includes('fast') || leaders.length >= 3) ? '' : ''}</div>`;
 }
+
+// ---------------------------------------------------------------- last-start upgrades
+// The engine reads each past run against the day it was run. Here we show it.
+const UPGRADE_ICON = { pace_against: '↑', draw_against: '↑', best_in_race: '★', strong_race: '🏆',
+                       pace_with: '↓', draw_with: '↓', weak_race: '·' };
+function runFlagChips(x) {
+  const fl = x.flags || [];
+  if (!fl.length) return '';
+  return fl.map(f => `<span class="pill ${f.dir > 0 ? 'sect-green' : 'sect-red'} py-0.5 ml-1" data-tip="${esc(f.text)}">${UPGRADE_ICON[f.code] || ''} ${esc(f.code.replace(/_/g, ' '))}</span>`).join('');
+}
+function upgradeBadge(r) {
+  if (!r.upgrade_note) return '';
+  const up = (r.upgrade_up || 0) > 0;
+  return `<span class="pill ${up ? 'sect-green' : 'sect-red'} ml-1" data-tip="${esc('Last start: ' + r.upgrade_note)}">${up ? '↑ beat the day' : '↓ had it easy'}</span>`;
+}
+
+// ---------------------------------------------------------------- price alerts
+// Watches the prices while the page is open. A play is only a bet at the right
+// price, so the alert fires when one drifts out to where we want it, when a
+// play is being backed, and when a blackbooked or starred horse firms.
+const ALERT = { seen: {}, log: [], on: false, drift: 8 };
+
+function alertsInit() {
+  try { ALERT.on = localStorage.getItem('edge_alerts') === '1'; } catch (e) {}
+  paintAlertButton();
+}
+function paintAlertButton() {
+  const b = document.getElementById('alertBtn'); if (!b) return;
+  b.textContent = ALERT.on ? '🔔 Alerts on' : '🔕 Alerts off';
+  b.className = 'text-xs font-bold border rounded-lg px-3 py-1.5 ' +
+    (ALERT.on ? 'text-emerald-300 border-emerald-500/50 bg-emerald-500/10' : 'text-gray-400 border-[#1e2638] hover:border-gray-500');
+}
+async function toggleAlerts() {
+  ALERT.on = !ALERT.on;
+  try { localStorage.setItem('edge_alerts', ALERT.on ? '1' : '0'); } catch (e) {}
+  if (ALERT.on && 'Notification' in window && Notification.permission === 'default') {
+    try { await Notification.requestPermission(); } catch (e) {}
+  }
+  paintAlertButton();
+  if (ALERT.on) { status('Alerts on. Leave this tab open and turn on auto prices.', 'emerald'); checkAlerts(true); }
+}
+function notify(title, body) {
+  ALERT.log.unshift({ at: new Date(), title, body });
+  ALERT.log = ALERT.log.slice(0, 30);
+  paintAlertLog();
+  if (!ALERT.on) return;
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body, tag: title + body });
+  } catch (e) {}
+}
+function paintAlertLog() {
+  const el = document.getElementById('alertLog'); if (!el) return;
+  el.classList.toggle('hidden', !ALERT.log.length);
+  el.innerHTML = ALERT.log.slice(0, 6).map(a => `<div class="flex gap-2 text-[11px] py-1 border-t border-[#1e2638] first:border-0">
+      <span class="text-gray-500 font-mono-numbers">${a.at.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}</span>
+      <span class="text-white font-bold">${esc(a.title)}</span><span class="text-gray-400">${esc(a.body)}</span></div>`).join('');
+}
+
+// Called after every price refresh.
+function checkAlerts(quiet) {
+  if (!S.races || !S.races.length) return;
+  const watch = new Set([...(S.stars || []), ...(S.blackbook || [])].map(x => x.horse_name.toLowerCase()));
+  S.races.forEach(race => {
+    if (race.result_in) return;
+    (S.runners[race.race_id] || []).forEach(r => {
+      if (r._scratched || !r._market || !r._fair) return;
+      const key = race.race_id + '|' + r.horse_name;
+      const was = ALERT.seen[key];
+      const now = { price: r._market, play: !!r.play_flag, value: !!r._value, mao: r._mao };
+      ALERT.seen[key] = now;
+      if (!was || quiet) return;
+      const where = `R${race.race_number} ${r.horse_name}`;
+      const move = was.price ? (r._market / was.price - 1) * 100 : 0;
+      if (now.play && r._mao && r._market >= r._mao && was.price < was.mao)
+        notify('★ Play is now the right price', `${where} out to ${money(r._market)} — above our minimum ${money(r._mao)}`);
+      else if (now.value && !was.value)
+        notify('✅ Value flag', `${where} at ${money(r._market)} against our ${money(r._fair)}`);
+      else if (now.play && move <= -ALERT.drift)
+        notify('Play is being backed', `${where} in from ${money(was.price)} to ${money(r._market)}`);
+      else if (watch.has(r.horse_name.toLowerCase()) && move <= -ALERT.drift)
+        notify('Blackbook horse firming', `${where} in from ${money(was.price)} to ${money(r._market)}`);
+      else if (now.play && move >= ALERT.drift * 1.5)
+        notify('Play is drifting', `${where} out from ${money(was.price)} to ${money(r._market)} — check for a reason`);
+    });
+  });
+}

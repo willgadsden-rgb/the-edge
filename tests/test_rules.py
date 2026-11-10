@@ -132,3 +132,58 @@ def test_minimum_acceptable_odds_and_void():
     assert staking_engine.calculate_mao(4.0, 0.15) == 4.60
     assert staking_engine.is_void(4.50, 4.0, 0.15)
     assert not staking_engine.is_void(4.80, 4.0, 0.15)
+
+
+# ------------------------------------------------------------------ last-start upgrades
+import upgrades
+
+
+def test_meeting_bias_needs_enough_winners():
+    few = [(1, 2, 10)] * 4
+    assert upgrades.meeting_bias(few)["pace"] is None
+    leaders = [(1, 2, 10)] * 6 + [(8, 9, 10)] * 2
+    assert upgrades.meeting_bias(leaders)["pace"] == "on-pace"
+    swoopers = [(9, 9, 12)] * 7 + [(1, 1, 12)]
+    assert upgrades.meeting_bias(swoopers)["pace"] == "backmarkers"
+
+
+def test_a_horse_that_beat_the_bias_is_upgraded():
+    run = {"pos": 2, "field": 12, "settle": 10, "barrier": 4, "rating": 70}
+    flags = upgrades.run_flags(run, {"pace": "on-pace", "draw": None})
+    assert any(c == "pace_against" and d > 0 for c, _t, d in flags)
+
+
+def test_a_horse_that_got_every_favour_is_downgraded():
+    run = {"pos": 1, "field": 12, "settle": 1, "barrier": 2, "rating": 70}
+    flags = upgrades.run_flags(run, {"pace": "on-pace", "draw": None})
+    assert any(c == "pace_with" and d < 0 for c, _t, d in flags)
+
+
+def test_no_flags_without_a_bias():
+    run = {"pos": 2, "field": 12, "settle": 10, "barrier": 4, "rating": 70}
+    assert upgrades.run_flags(run, {"pace": None, "draw": None}) == []
+
+
+def test_best_run_in_the_race_without_winning():
+    run = {"pos": 4, "field": 10, "settle": 5, "barrier": 3, "rating": 88.0}
+    flags = upgrades.run_flags(run, {}, best_rating=88.0)
+    assert any(c == "best_in_race" for c, _t, _d in flags)
+    winner = dict(run, pos=1)
+    assert not any(c == "best_in_race" for c, _t, _d in upgrades.run_flags(winner, {}, best_rating=88.0))
+
+
+def test_strength_of_the_race_cuts_both_ways():
+    strong = {"pos": 3, "field": 10, "next_runs": 20, "next_wins": 5}
+    weak = {"pos": 3, "field": 10, "next_runs": 14, "next_wins": 0}
+    assert any(c == "strong_race" and d > 0 for c, _t, d in upgrades.run_flags(strong, {}))
+    assert any(c == "weak_race" and d < 0 for c, _t, d in upgrades.run_flags(weak, {}))
+
+
+def test_annotate_summarises_the_latest_run_only():
+    runs = [{"rid": "A", "pos": 2, "field": 12, "settle": 11, "barrier": 3, "rating": 70},
+            {"rid": "B", "pos": 1, "field": 12, "settle": 1, "barrier": 1, "rating": 70}]
+    ctx = {"A": {"bias": {"pace": "on-pace"}, "best_rating": None},
+           "B": {"bias": {"pace": "on-pace"}, "best_rating": None}}
+    out = upgrades.annotate(runs, ctx)
+    assert out["up"] == 1 and out["down"] == 0 and "leaders dominated" in out["summary"]
+    assert runs[1]["flags"][0]["dir"] < 0          # the older run is still flagged on its own row

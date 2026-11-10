@@ -28,6 +28,7 @@ from pricing_engine import calculate_blended_fair_prices, effective_odds, commis
 from rating_engine import calculate_0_to_100_score, calculate_projected_score
 from staking_engine import calculate_mao, calculate_stake, DEFAULT_MIN_EDGE
 import plays
+import upgrades
 
 MARKET_WEIGHT = 0.70          # same default as the app's market anchoring
 OVERLAY_EDGE = 0.20           # value flag: edge >= 20% and price at/above the minimum
@@ -88,7 +89,8 @@ PUB_TABLES = {
                  ("class_move", "TEXT"), ("class_move_pts", "REAL"), ("form_rank", "INTEGER"),
                  # plays / fades and the locked morning numbers
                  ("play_flag", "INTEGER"), ("play_reasons", "TEXT"), ("fade_flag", "INTEGER"), ("play_checks", "TEXT"),
-                 ("morning_price", "REAL"), ("morning_fair", "REAL"), ("morning_p", "REAL"), ("morning_at", "TEXT")],
+                 ("morning_price", "REAL"), ("morning_fair", "REAL"), ("morning_p", "REAL"), ("morning_at", "TEXT"),
+                 ("upgrade_up", "INTEGER"), ("upgrade_down", "INTEGER"), ("upgrade_note", "TEXT")],
     },
     # Paper-bet ledger: a row is written the first time a runner is flagged before
     # its race and never changed. kind = play | value | fade | top.
@@ -503,6 +505,30 @@ def publish_card(db, card, model=None, published_at=None):
 
     for row in e_rows:
         row.setdefault("scratched", 0)
+
+    # Read every last start against the day it was run: a horse that beat the
+    # bias is better than its placing, one that got every favour is worse.
+    try:
+        parsed = {}
+        rids = []
+        for row in e_rows:
+            if not row.get("last_runs"):
+                continue
+            runs = json.loads(row["last_runs"])
+            parsed[id(row)] = runs
+            rids.extend(r.get("rid") for r in runs)
+        ctx = upgrades.load_context(db, rids)
+        for row in e_rows:
+            runs = parsed.get(id(row))
+            if runs is None:
+                continue
+            summary = upgrades.annotate(runs, ctx)
+            row["last_runs"] = json.dumps(runs)
+            row["upgrade_up"] = summary["up"]
+            row["upgrade_down"] = summary["down"]
+            row["upgrade_note"] = summary["summary"]
+    except Exception as exc:
+        print("last-start upgrades skipped: {}".format(exc))
     counts = {"edge_meetings": _upsert(db, "edge_meetings", m_rows),
               "edge_races": _upsert(db, "edge_races", r_rows),
               "edge_runners": _upsert(db, "edge_runners", e_rows)}
