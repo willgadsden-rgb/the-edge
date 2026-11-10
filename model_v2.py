@@ -137,7 +137,7 @@ def build_dataset(h, model, since=TRAIN_FROM):
         f = runner_features(model, x.horse_name, race)
         f["mkt"] = math.log(1.0 / x.sp)
         f.update(win=float(x.finish_pos == 1), sp=float(x.sp), bsp=float(x.bsp) if pd.notna(x.bsp) else None,
-                 race_date=x.race_date, race_id=x.race_id)
+                 race_date=x.race_date, race_id=x.race_id, source=x.source)
         out.append(f)
     return pd.DataFrame(out)
 
@@ -238,6 +238,82 @@ def evaluate(df):
     }
 
 
+# ------------------------------------------------------------------ audit
+def audit(df, n_boot=400, seed=7):
+    """Stress-test on the unseen period: is the gain over the market real, stable,
+    and more than favourite-longshot bias? Bootstrap resamples whole race days."""
+    rng = np.random.default_rng(seed)
+    split = pd.Timestamp(SPLIT_DATE)
+    train, test = df[df["race_date"] < split], df[df["race_date"] >= split].copy()
+    mu, sd = train[NAMES].mean(), train[NAMES].std().replace(0, 1.0)
+    sd["mkt"], mu["mkt"] = 1.0, 0.0
+    D = lambda d, cols: np.column_stack([np.ones(len(d)), ((d[cols] - mu[cols]) / sd[cols]).values])
+    form_only = [n for n in NAMES if n != "mkt"]
+    w_m = fit_logit(D(train, ["mkt"]), train["win"].values)
+    w_f = fit_logit(D(train, NAMES), train["win"].values)
+    w_o = fit_logit(D(train, form_only), train["win"].values)
+    sig = lambda z: 1 / (1 + np.exp(-z))
+    test["p_m"], test["p_f"], test["p_o"] = sig(D(test, ["mkt"]) @ w_m), sig(D(test, NAMES) @ w_f), sig(D(test, form_only) @ w_o)
+    y = test["win"].values
+    base = np.full(len(test), train["win"].mean())
+    ll = lambda p, yy: -(yy * np.log(np.clip(p, 1e-6, 1)) + (1 - yy) * np.log(np.clip(1 - p, 1e-6, 1)))
+    test["d_ll"] = ll(test["p_m"].values, y) - ll(test["p_f"].values, y)          # + = model better
+    out = ["AUDIT of model v2 on {:,} unseen runs ({} to {}), trained on {:,}".format(
+        len(test), test["race_date"].min().date(), test["race_date"].max().date(), len(train))]
+    out.append("Win rate in the data: train {:.1%}, test {:.1%} (a full field averages about 10%)".format(train["win"].mean(), test["win"].mean()))
+    out.append("Log-loss: no-info {:.5f} | form only (no price) {:.5f} | market only {:.5f} | market+form {:.5f}".format(
+        ll(base, y).mean(), ll(test["p_o"].values, y).mean(), ll(test["p_m"].values, y).mean(), ll(test["p_f"].values, y).mean()))
+    days = test["race_date"].dt.normalize()
+    groups = {d: g for d, g in test.groupby(days)}
+    keys = list(groups)
+
+    def boot(stat):
+        vals = []
+        for _ in range(n_boot):
+            pick = rng.choice(len(keys), len(keys))
+            vals.append(stat(pd.concat([groups[keys[i]] for i in pick])))
+        v = np.array([x for x in vals if x is not None and not np.isnan(x)])
+        return np.percentile(v, 2.5), np.percentile(v, 97.5), v
+
+    lo, hi, v = boot(lambda d: d["d_ll"].mean())
+    out.append("Gain over the market per run: {:+.5f}  95% CI [{:+.5f}, {:+.5f}]  positive in {:.0%} of resamples".format(
+        test["d_ll"].mean(), lo, hi, (v > 0).mean()))
+    mid = test["race_date"].sort_values().iloc[len(test) // 2]
+    for name, part in (("first half", test[test["race_date"] <= mid]), ("second half", test[test["race_date"] > mid])):
+        out.append("  {} ({:,} runs): gain {:+.5f}".format(name, len(part), part["d_ll"].mean()))
+    for src, part in test.groupby(test["source"].fillna("?")):
+        out.append("  source {} ({:,} runs, win rate {:.1%}): gain {:+.5f}".format(src, len(part), part["win"].mean(), part["d_ll"].mean()))
+
+    band = test["sp"].between(*ODDS_BAND)
+    groupsets = {"Overlays (model 20%+ above market)": test[band & (test["p_f"] >= OVERLAY * test["p_m"])],
+                 "Unders / fades (model 20%+ below)": test[band & (test["p_f"] <= test["p_m"] / OVERLAY)],
+                 "Everything $2.20-$18": test[band]}
+    out.append("A/E vs the market-only chance (1.00 = the price already had it right; this strips out favourite-longshot bias):")
+    for name, g in groupsets.items():
+        if g.empty:
+            out.append("  {}: none".format(name)); continue
+        flag = (lambda d, nm=name: (lambda x: x["win"].sum() / x["p_m"].sum() if len(x) and x["p_m"].sum() > 0 else np.nan)(
+            d[d["sp"].between(*ODDS_BAND) & ((d["p_f"] >= OVERLAY * d["p_m"]) if nm.startswith("Overlays") else
+                                             (d["p_f"] <= d["p_m"] / OVERLAY) if nm.startswith("Unders") else True)]))
+        lo, hi, _ = boot(flag)
+        out.append("  {:<36} n={:<5} wins={:<4} A/E vs market {:.3f}  95% CI [{:.3f}, {:.3f}]  | A/E vs model {:.3f} | avg SP ${:.2f} | ROI at SP {:+.1f}%".format(
+            name, len(g), int(g["win"].sum()), g["win"].sum() / g["p_m"].sum(), lo, hi, g["win"].sum() / g["p_f"].sum(),
+            g["sp"].mean(), np.where(g["win"] == 1, g["sp"] - 1, -1).mean() * 100))
+    for name in ("Overlays (model 20%+ above market)", "Unders / fades (model 20%+ below)"):
+        g = groupsets[name]
+        for hn, part in (("first half", g[g["race_date"] <= mid]), ("second half", g[g["race_date"] > mid])):
+            if len(part):
+                out.append("    {} {}: n={} A/E vs market {:.3f}".format(name.split(" (")[0], hn, len(part), part["win"].sum() / part["p_m"].sum()))
+    out.append("Market calibration by SP band on unseen runs (A/E vs raw 1/SP; below 1 = worse than its price):")
+    for lo_, hi_ in ((1, 2.2), (2.2, 4), (4, 7), (7, 12), (12, 18), (18, 40), (40, 1001)):
+        g = test[(test["sp"] >= lo_) & (test["sp"] < hi_)]
+        if len(g):
+            out.append("  ${:<5}-${:<6} n={:<5} strike {:>5.1%}  A/E {:.3f}  ROI at SP {:+.1f}%".format(
+                lo_, hi_, len(g), g["win"].mean(), g["win"].sum() / (1 / g["sp"]).sum(), np.where(g["win"] == 1, g["sp"] - 1, -1).mean() * 100))
+    out.append("Runs with no rated form before the race: {:.1%} of the unseen set".format(test["no_form"].mean()))
+    return "\n".join(out)
+
+
 # ------------------------------------------------------------------ storage
 DDL = ("CREATE TABLE IF NOT EXISTS model_params (name TEXT PRIMARY KEY, fitted_at TEXT, "
        "params_json TEXT)")
@@ -292,6 +368,7 @@ def main(argv=None):
     ap.add_argument("--fit", action="store_true")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--no-save", action="store_true")
+    ap.add_argument("--audit", action="store_true", help="stress-test on the unseen period; saves nothing")
     a = ap.parse_args(argv)
     from history_db import HistoryDB
     db = HistoryDB()
@@ -305,6 +382,9 @@ def main(argv=None):
         if not a.no_save:
             save(db, p)
             print("Saved to model_params (name v2).")
+    elif a.audit:
+        h = load_history(db)
+        print(audit(build_dataset(h, FormModel(h))))
     elif a.report:
         p = load(db)
         print(report(p) if p else "No model saved yet.")

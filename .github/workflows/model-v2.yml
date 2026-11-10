@@ -3,6 +3,11 @@
 name: Fit model v2
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "fit (default) or audit (stress-test only, saves nothing)"
+        required: false
+        default: "fit"
   schedule:
     - cron: "23 17 * * 0"    # Monday 4:23am AEDT
 jobs:
@@ -17,4 +22,4 @@ jobs:
       - run: pip install -r requirements.txt
       - env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python model_v2.py --fit
+        run: python model_v2.py --${{ inputs.mode || 'fit' }}
