@@ -1,0 +1,43 @@
+# Check the website holds every Victorian meeting in a date range, and pull the
+# ones it is missing. 5 Form King credits per meeting pulled; the listing is free.
+name: Audit meetings
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "From date YYYY-MM-DD"
+        required: true
+      to:
+        description: "To date YYYY-MM-DD"
+        required: true
+      max:
+        description: "Most meetings to pull this run"
+        required: false
+        default: "40"
+      list_only:
+        description: "List the gaps without spending credits (true/false)"
+        required: false
+        default: "false"
+concurrency:
+  group: backfill
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - env:
+          FORMKING_API_KEY: ${{ secrets.FORMKING_API_KEY }}
+          FORMKING_BASE_URL: ${{ secrets.FORMKING_BASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ "${{ inputs.list_only }}" = "true" ]; then
+            python harvest.py --audit "${{ inputs.from }}" "${{ inputs.to }}" --audit-only
+          else
+            python harvest.py --audit "${{ inputs.from }}" "${{ inputs.to }}" --max "${{ inputs.max }}"
+          fi
