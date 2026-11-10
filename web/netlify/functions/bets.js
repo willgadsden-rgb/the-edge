@@ -4,17 +4,16 @@
 // Stake rule: to win $100, capped at $75 (worked out here, not trusted from the browser).
 // Env (Netlify > Site configuration > Environment variables):
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   (already set)
-//   BET_PIN   a shared PIN for the syndicate; required to log or void a bet
+//   BET_PIN   optional: if set, a PIN is required to log or void a bet (not set = one click)
 const TARGET = 100, MAX_STAKE = 75;
 const json = (statusCode, body) => ({ statusCode, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) });
 
 exports.handler = async (event) => {
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY, pin = process.env.BET_PIN;
   if (!url || !key) return json(500, { error: 'SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set in Netlify.' });
-  if (!pin) return json(500, { error: 'Set BET_PIN in Netlify (Site configuration > Environment variables) to switch the bet log on.' });
   if (event.httpMethod !== 'POST') return json(405, { error: 'POST only' });
   let b; try { b = JSON.parse(event.body || '{}'); } catch (e) { return json(400, { error: 'Bad JSON' }); }
-  if (String(b.pin || '') !== String(pin)) return json(401, { error: 'Wrong PIN' });
+  if (pin && String(b.pin || '') !== String(pin)) return json(401, { error: 'PIN required' });
   const sb = (path, opts = {}) => fetch(`${url}/rest/v1/${path}`, { ...opts, headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=representation' } });
   const qs = event.queryStringParameters || {};
   if (qs.void) {

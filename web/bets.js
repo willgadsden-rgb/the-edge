@@ -70,8 +70,7 @@ async function logBet() {
   const r = betFormRunners().find(x => x.horse_name === BL.form.horse);
   const odds = Number(document.getElementById('betOdds').value);
   if (!race || !r || !(odds > 1.01)) { msg.innerHTML = '<span class="text-red-400">Pick a race, a horse and the odds.</span>'; return; }
-  let pin = BL.pin || lsGet('edge_bet_pin');
-  if (!pin) { pin = window.prompt('Syndicate bet PIN'); if (!pin) return; }
+  const pin = BL.pin || lsGet('edge_bet_pin') || '';
   const eff = 1 + (odds - 1) * (1 - (race.commission ?? 0.08));
   const body = { pin, bettor: lsGet('edge_bettor') || '', meeting_date: race.meeting_date || S.date, track: (S.meeting || {}).track,
     race_id: race.race_id, race_number: race.race_number, horse_name: r.horse_name, saddlecloth: r.saddlecloth, odds_taken: odds,
@@ -81,15 +80,19 @@ async function logBet() {
   try {
     const res = await fetch('/api/bets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const out = await res.json();
-    if (!res.ok) { if (res.status === 401) { lsSet('edge_bet_pin', ''); BL.pin = null; } throw new Error(out.error || res.status); }
-    BL.pin = pin; lsSet('edge_bet_pin', pin); if (BL.form.bookie) lsSet('edge_bookie', BL.form.bookie);
+    if (res.status === 401) {          // only if a PIN has been switched on in Netlify
+      const p = window.prompt('Bet PIN'); if (!p) { msg.innerHTML = ''; return; }
+      BL.pin = p; lsSet('edge_bet_pin', p); return logBet();
+    }
+    if (!res.ok) throw new Error(out.error || res.status);
+    if (BL.form.bookie) lsSet('edge_bookie', BL.form.bookie);
     BL.msg = msg.innerHTML = `<span class="text-emerald-400">Logged: ${esc(r.horse_name)} $${out.bet.stake.toFixed(2)} @ ${money(odds)} to win $${out.bet.to_win.toFixed(2)}.</span>`;
     BL.form.note = ''; BL.bets = null; loadBets();
   } catch (e) { msg.innerHTML = `<span class="text-red-400">Not logged: ${esc(e.message)}</span>`; }
 }
 async function voidBet(id) {
   if (!window.confirm || !confirm('Void this bet? It stays in the log, marked void, and drops out of the P&L.')) return;
-  const pin = BL.pin || lsGet('edge_bet_pin') || window.prompt('Syndicate bet PIN'); if (!pin) return;
+  const pin = BL.pin || lsGet('edge_bet_pin') || '';
   const res = await fetch('/api/bets?void=' + encodeURIComponent(id), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }) });
   if (res.ok) { BL.bets = null; loadBets(); }
 }
