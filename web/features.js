@@ -565,7 +565,7 @@ async function modelCard() {
 function renderReviewSummary() {
   const box = document.getElementById('reviewSummary'); if (!box) return;
   const done = S.races.filter(r => r.result_in);
-  if (!done.length) { box.innerHTML = ''; return; }
+  if (!done.length) { box.innerHTML = meetingStatusBar() || '<div class="text-sm text-gray-500">Nothing run yet at this meeting.</div>'; return; }
   let n = 0, wins = 0, staked = 0, pl = 0, topW = 0, topExp = 0;
   const follow = [];
   done.forEach(race => {
@@ -584,7 +584,7 @@ function renderReviewSummary() {
       }
     });
   });
-  box.innerHTML = `
+  box.innerHTML = meetingStatusBar() + `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="bg-[#0d1117] border border-[#1e2638] rounded-lg p-4">
         <div class="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Value flags this meeting</div>

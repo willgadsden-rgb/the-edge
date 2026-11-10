@@ -539,7 +539,7 @@
           </table>
         </div>`);
     });
-    document.getElementById('cardSummary').innerHTML = lines.join('') || '<div class="text-gray-500">No races.</div>';
+    document.getElementById('cardSummary').innerHTML = meetingStatusBar() + (lines.join('') || '<div class="text-gray-500">No races.</div>');
     document.getElementById('allRacesCards').innerHTML = cards.join('');
     renderPlays();
     renderBias();
@@ -556,7 +556,9 @@
     if (!race) return;
     const allRows = S.runners[race.race_id] || [];
     const scr = allRows.filter(r => r.scratched || r._scratched).sort((a, b) => (a.saddlecloth || 99) - (b.saddlecloth || 99));
-    const rows = allRows.filter(r => !r.scratched && !r._scratched).sort((a, b) => (b._p || 0) - (a._p || 0));
+    const resulted = race.result_in && allRows.some(r => r.finish_pos);
+    const rows = allRows.filter(r => !r.scratched && !r._scratched)
+      .sort(resulted ? (a, b) => (a.finish_pos || 99) - (b.finish_pos || 99) : (a, b) => (b._p || 0) - (a._p || 0));
     const m = S.meeting || {};
     const chip = (t, title = '') => `<span class="pill bg-[#11151d] border border-[#1e2638] text-gray-300 text-[11px] py-1" title="${esc(title)}">${t}</span>`;
     document.getElementById('raceHeader').innerHTML =
@@ -569,6 +571,7 @@
         race.model_version === 'v3'
           ? "Prices from the model fitted on every runner in every Australian race from Betfair's own results, with our Form King ratings on top, re-normalised to a 100% book"
           : 'Prices from the model fitted on our results (form signals on top of the market), re-normalised to a 100% book') : chip('⚖️ 70/30 blend', 'Prices from the 70% market / 30% form-model blend')) +
+      raceStatusChip(race, allRows) +
       (scr.length ? chip(`✂️ Scratched: ${scr.map(r => (r.saddlecloth ?? '') + ' ' + esc(r.horse_name)).join(', ')}`) : '') +
       paceVerdict(race, allRows);
     renderRaceTab(race);
@@ -584,7 +587,7 @@
         <tr class="runner-row ${r._scratched ? 'scratched' : ''}" onclick="toggleRow('${race.race_id}', ${JSON.stringify(r.horse_name).replace(/"/g, '&quot;')})">
           <td class="p-3 text-gray-400 font-bold">${r.saddlecloth ?? ''}</td>
           <td class="p-3 font-sans">
-            <div class="text-white font-bold"><button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" title="Open full form" onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${esc(r.horse_name)}</button> ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}${avgBadge(r)}${upgradeBadge(r)} <span class="inline-flex flex-wrap gap-0.5 align-middle ml-1">${angleTags(r, race)}${goingTag(r, race)}</span></div>
+            <div class="text-white font-bold">${finishChip(r, race)}<button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" title="Open full form" onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${esc(r.horse_name)}</button> ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}${avgBadge(r)}${upgradeBadge(r)} <span class="inline-flex flex-wrap gap-0.5 align-middle ml-1">${angleTags(r, race)}${goingTag(r, race)}</span></div>
             <div class="text-[10px] text-gray-500">${esc(r.jockey || '–')}${r.apprentice_claim ? ` (a${num(r.apprentice_claim, 1)})` : ''} · ${esc(r.trainer || '–')} · ${num(r.weight, 1)}kg ${riderTags(r)}</div>
             <div class="mt-1.5">${ratedRuns(r, race)}</div>
           </td>
@@ -599,7 +602,7 @@
           <td class="p-3 text-white font-bold">${money(r._market)}${steam}</td>
           <td class="p-3 ${r._edge > 0 ? 'text-emerald-400' : 'text-gray-500'}">${r._edge === null ? '–' : signed(r._edge * 100, 0, '%')}</td>
           <td class="p-3 text-gray-400">${money(r._mao)}</td>
-          <td class="p-3">${betCell(r, race)}</td>
+          <td class="p-3">${resulted ? resultCell(r) : betCell(r, race)}</td>
         </tr>
         ${open ? `<tr><td colspan="14" class="px-4 py-5 md:px-6 bg-[#0d1117]">${detailPanel(r, race)}</td></tr>` : ''}`;
     }).join('') || '<tr><td colspan="14" class="p-10 text-center text-gray-500">No runners.</td></tr>';
@@ -739,7 +742,7 @@
       <div class="space-y-4 py-2" onclick="event.stopPropagation()">
         <div class="flex flex-wrap justify-between items-start gap-3">
           <div class="flex flex-wrap gap-2">${facts.map(f => `<span class="px-2.5 py-1 rounded-md bg-[#11151d] border border-[#1e2638] text-[11px] text-gray-300">${f}</span>`).join('')}</div>
-          <div class="flex gap-2"><button onclick='event.stopPropagation();prefillBet("${race ? race.race_id : ''}", ${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-xs font-bold text-emerald-400 border border-emerald-500/40 rounded-lg px-3 py-1.5 hover:bg-emerald-500/10 whitespace-nowrap">+ Log bet</button>
+          <div class="flex gap-2">${bbButton(r.horse_name, 'card')}<button onclick='event.stopPropagation();prefillBet("${race ? race.race_id : ''}", ${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-xs font-bold text-emerald-400 border border-emerald-500/40 rounded-lg px-3 py-1.5 hover:bg-emerald-500/10 whitespace-nowrap">+ Log bet</button>
           <button onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-xs font-bold text-[#ff6600] border border-[#ff6600]/40 rounded-lg px-3 py-1.5 hover:bg-[#ff6600]/10 whitespace-nowrap">Full form &amp; records →</button></div>
         </div>
         ${r.play_checks ? block('High-percentage play: the rules', playChecksBlock(r)) : ''}
@@ -802,7 +805,7 @@
       const outran = (r.result_rating !== null && r.form_gap_l !== null && race.form_par !== null);
       return `<tr>
         <td class="p-3 font-bold ${r.finish_pos === 1 ? 'text-emerald-400' : 'text-gray-300'}">${r.finish_pos ?? '–'}</td>
-        <td class="p-3 font-sans text-white font-bold">${r.saddlecloth ?? ''}. ${esc(r.horse_name)}</td>
+        <td class="p-3 font-sans text-white font-bold"><button class="hover:text-[#ff6600]" onclick='openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${r.saddlecloth ?? ''}. ${esc(r.horse_name)}</button> ${bbButton(r.horse_name, 'meeting review', 'star')}</td>
         <td class="p-3">${r.finish_pos === 1 ? signed(r.margin, 1) : num(r.margin === null ? null : Math.abs(r.margin), 1)}</td>
         <td class="p-3">${money(r.result_sp)} / ${money(r.result_bsp)}</td>
         <td class="p-3 text-[#ffa366]">${money(r.fair_price)}</td>

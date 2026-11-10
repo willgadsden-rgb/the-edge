@@ -9,7 +9,7 @@ const TARGET = 100, MAX_STAKE = 75;
 const json = (statusCode, body) => ({ statusCode, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) });
 
 exports.handler = async (event) => {
-  const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY, pin = process.env.BET_PIN;
+  const url = String(process.env.SUPABASE_URL || '').trim().replace(/\/+$/, ''), key = process.env.SUPABASE_SERVICE_ROLE_KEY, pin = process.env.BET_PIN;
   if (!url || !key) return json(500, { error: 'SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set in Netlify.' });
   if (event.httpMethod !== 'POST') return json(405, { error: 'POST only' });
   let b; try { b = JSON.parse(event.body || '{}'); } catch (e) { return json(400, { error: 'Bad JSON' }); }

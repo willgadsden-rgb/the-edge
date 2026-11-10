@@ -143,13 +143,27 @@ async function blackbookSet(name, on, source = '') {
   const res = await fetch('/api/blackbook' + (on ? '' : '?remove=1'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ horse_name: name, note, added_by: lsGet('edge_bettor') || '', source, pin: lsGet('edge_bet_pin') || '' }) });
   if (!res.ok) { status('Blackbook not saved: ' + ((await res.json().catch(() => ({}))).error || res.status), 'red'); return; }
-  await loadWatchlists(); renderStars();
-  const b = document.getElementById('bbBtn'); if (b) b.outerHTML = bbButton(name);
+  await loadWatchlists();
+  paintBlackbookButtons();
+  if (document.getElementById('starsBody') && document.getElementById('starsBody').innerHTML) renderStars();
+  status(on ? `${name} added to the blackbook.` : `${name} removed from the blackbook.`, 'emerald');
 }
 const inBlackbook = name => (S.blackbook || []).some(b => b.horse_name.toLowerCase() === String(name).toLowerCase());
-function bbButton(name) {
+// One button shape everywhere: the card, the panel, the review, the horse page.
+function bbButton(name, where = 'horse page', style = 'full') {
   const on = inBlackbook(name);
-  return `<button id="bbBtn" onclick='blackbookSet(${jsq(name)}, ${!on}, "horse page")' class="text-xs font-bold border rounded-lg px-3 py-1.5 ${on ? 'text-sky-300 border-sky-500/50 bg-sky-500/10' : 'text-gray-300 border-[#1e2638] hover:border-sky-400'}">${on ? '★ In blackbook' : '☆ Add to blackbook'}</button>`;
+  const cls = style === 'star'
+    ? `text-lg leading-none ${on ? 'text-sky-300' : 'text-gray-600 hover:text-sky-300'}`
+    : `text-xs font-bold border rounded-lg px-3 py-1.5 ${on ? 'text-sky-300 border-sky-500/50 bg-sky-500/10' : 'text-gray-300 border-[#1e2638] hover:border-sky-400'}`;
+  const label = style === 'star' ? (on ? '★' : '☆') : (on ? '★ In blackbook' : '☆ Add to blackbook');
+  return `<button data-bb="${esc(String(name).toLowerCase())}" data-bbstyle="${style}" data-bbwhere="${esc(where)}" class="${cls}" title="${on ? 'Remove from the blackbook' : 'Follow this horse'}"
+      onclick='event.stopPropagation();blackbookSet(${jsq(name)}, ${!on}, ${jsq(where)})'>${label}</button>`;
+}
+// Repaint every blackbook button on the page without re-rendering the view.
+function paintBlackbookButtons() {
+  document.querySelectorAll('[data-bb]').forEach(el => {
+    el.outerHTML = bbButton(el.getAttribute('data-bb'), el.getAttribute('data-bbwhere') || 'horse page', el.getAttribute('data-bbstyle') || 'full');
+  });
 }
 async function renderStars() {
   const box = document.getElementById('starsBody'); if (!box) return;
@@ -167,7 +181,7 @@ async function renderStars() {
       <td class="px-2 text-center font-mono-numbers ${s.vs_par_l >= 0 ? 'text-emerald-400 font-bold' : 'text-amber-300'}">${signed(s.vs_par_l, 1, 'L')}</td>
       <td class="px-2 text-[11px] text-gray-400">${esc(s.last_date || '')} ${esc(s.last_track || '')} ${s.last_distance ?? ''}m · ${ordinalTxt(s.last_pos)}</td>
       <td class="px-2 text-[11px] text-gray-300">${esc(s.reasons || '')}</td>
-      <td class="pl-2 text-right"><button onclick='blackbookSet(${jsq(s.horse_name)}, ${!inBlackbook(s.horse_name)}, "rising stars")' class="text-sky-300 text-lg" title="${inBlackbook(s.horse_name) ? 'Remove from blackbook' : 'Add to blackbook'}">${inBlackbook(s.horse_name) ? '★' : '☆'}</button></td>
+      <td class="pl-2 text-right">${bbButton(s.horse_name, 'rising stars', 'star')}</td>
     </tr>`).join('');
   const bb = (S.blackbook || []).map(b => `
     <div class="flex flex-wrap items-center justify-between gap-2 py-2 border-t border-[#1e2638] text-xs">
@@ -615,4 +629,58 @@ function checkAlerts(quiet) {
         notify('Play is drifting', `${where} out from ${money(was.price)} to ${money(r._market)} — check for a reason`);
     });
   });
+}
+
+// ---------------------------------------------------------------- results on the card
+// Once a race is run the card re-sorts into finishing order and shows what
+// happened. Ratings land later than the result, so the page says which it has.
+const ORD = n => !n ? '' : n + (['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : (n % 10 < 4 ? n % 10 : 0)]);
+function finishChip(r, race) {
+  if (!race.result_in || !r.finish_pos) return '';
+  const tone = r.finish_pos === 1 ? 'sect-green' : r.finish_pos <= 3 ? 'sect-yellow' : 'bg-[#0d1117] border border-[#1e2638] text-gray-400';
+  return `<span class="pill ${tone} mr-1.5">${ORD(r.finish_pos)}</span>`;
+}
+function resultCell(r) {
+  if (!r.finish_pos) return '<span class="text-gray-600">–</span>';
+  const m = r.margin;
+  const marg = (m === null || m === undefined) ? '' : (r.finish_pos === 1 ? 'won by ' + Math.abs(m).toFixed(1) + 'L' : Math.abs(m).toFixed(1) + 'L');
+  return `<div class="text-[11px] leading-tight"><span class="${r.finish_pos === 1 ? 'text-emerald-400 font-bold' : 'text-gray-300'}">${marg}</span>
+    <div class="text-gray-500 font-mono-numbers">SP ${money(r.result_sp)}${r.result_bsp ? ' · BSP ' + money(r.result_bsp) : ''}</div>
+    ${r.result_rating ? `<div class="font-mono-numbers text-white">rated ${num(r.result_rating, 1)}</div>` : '<div class="text-gray-600">rating pending</div>'}</div>`;
+}
+// Where a race is up to: not run, run but not rated, or rated and ready to review.
+function raceReadiness(race, rows) {
+  const live = (rows || []).filter(r => !r.scratched && !r._scratched);
+  const fin = live.filter(r => r.finish_pos).length;
+  const rated = live.filter(r => r.result_rating).length;
+  if (!race.result_in && !fin) return { state: 'pending', fin, rated, n: live.length };
+  if (rated >= Math.max(3, Math.round(live.length * 0.5))) return { state: 'rated', fin, rated, n: live.length };
+  return { state: 'unrated', fin, rated, n: live.length };
+}
+function raceStatusChip(race, rows) {
+  const rd = raceReadiness(race, rows);
+  if (rd.state === 'pending') return '';
+  const pill = (t, tone, tip) => `<span class="pill ${tone} text-[11px] py-1" data-tip="${esc(tip)}">${t}</span>`;
+  return rd.state === 'rated'
+    ? pill('✅ Run and rated', 'sect-green', 'The result and every runner\'s rating for this race are in. Ready to review.')
+    : pill('⏳ Result in · ratings pending', 'sect-yellow',
+           `Finishing order, margins and prices are in (${rd.fin} of ${rd.n} runners). Form King publishes the ratings later — they come with the night sync, usually by about 11:40pm Melbourne time.`);
+}
+// The same thing for a whole meeting, for the top of the card and the review.
+function meetingReadiness() {
+  const races = S.races || [];
+  let run = 0, rated = 0;
+  races.forEach(race => { const rd = raceReadiness(race, S.runners[race.race_id] || []); if (rd.state !== 'pending') run++; if (rd.state === 'rated') rated++; });
+  return { total: races.length, run, rated };
+}
+function meetingStatusBar() {
+  const m = meetingReadiness();
+  if (!m.total) return '';
+  if (!m.run) return '';
+  const done = m.rated === m.total;
+  const partly = m.run === m.total && m.rated < m.total;
+  const text = done ? `✅ All ${m.total} races run and rated — this meeting is ready to review.`
+    : partly ? `⏳ All ${m.total} races run, ratings in for ${m.rated}. Finishing order, margins and prices are here now; the ratings arrive with the night sync (about 11:40pm Melbourne). Press Sync Data after that if you want them sooner.`
+    : `🏇 ${m.run} of ${m.total} races run${m.rated ? `, ${m.rated} rated` : ''}.`;
+  return `<div class="rounded-xl border ${done ? 'border-emerald-500/40' : 'border-amber-500/30'} bg-[#11151d] px-4 py-2 text-[12px] ${done ? 'text-emerald-300' : 'text-amber-200'} mb-4">${text}</div>`;
 }
