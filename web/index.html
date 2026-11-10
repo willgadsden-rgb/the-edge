@@ -54,6 +54,7 @@
       <button onclick="switchTab('racing')" id="tab-racing-btn" class="nav-tab active w-full text-left px-3 py-2 rounded-lg font-bold">Live Cards</button>
       <button onclick="switchTab('results')" id="tab-results-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Meeting Review</button>
       <button onclick="switchTab('horses')" id="tab-horses-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Horse Search</button>
+      <button onclick="switchTab('compare')" id="tab-compare-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Compare Horses</button>
       <button onclick="switchTab('lab')" id="tab-lab-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Pattern Lab</button>
       <button onclick="switchTab('record')" id="tab-record-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Track Record</button>
       <button onclick="switchTab('guide')" id="tab-guide-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">How to read it</button>
@@ -86,6 +87,7 @@
       <button onclick="switchTab('racing')" id="mtab-racing-btn" class="nav-tab active px-3 py-1.5 rounded-lg font-bold text-xs">Live Cards</button>
       <button onclick="switchTab('results')" id="mtab-results-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Review</button>
       <button onclick="switchTab('horses')" id="mtab-horses-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Horses</button>
+      <button onclick="switchTab('compare')" id="mtab-compare-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Compare</button>
       <button onclick="switchTab('lab')" id="mtab-lab-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Lab</button>
       <button onclick="switchTab('record')" id="mtab-record-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Record</button>
       <button onclick="switchTab('guide')" id="mtab-guide-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Guide</button>
@@ -144,6 +146,7 @@
             <div class="p-4 border-b border-[#1e2638] flex flex-wrap gap-2 justify-between items-center bg-[#0d1117]">
               <div class="flex items-center gap-3">
                 <h2 class="text-white font-black text-lg">Odds Matrix</h2>
+                <button onclick="cmpFromRace()" class="text-xs font-bold text-gray-300 border border-[#1e2638] bg-[#11151d] px-3 py-1.5 rounded-lg hover:border-[#ff6600]" title="Compare this race's top four side by side">⚖ Compare</button>
                 <button onclick="toggleModsPanel()" id="modsBtn" class="text-xs font-bold text-gray-300 border border-[#1e2638] bg-[#11151d] px-3 py-1.5 rounded-lg hover:border-[#ff6600]">⚙ Modifiers</button>
                 <span id="modsActive" class="hidden pill sect-yellow text-[11px] py-1">MODIFIERS ON</span>
               </div>
@@ -221,6 +224,20 @@
         </div>
       </section>
 
+      <!-- COMPARE -->
+      <section id="section-compare" class="hidden space-y-6">
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-1">Ratings to lengths</h2>
+          <p class="text-[11px] text-gray-500 mb-4">Type in ratings and a distance to see the gap in lengths.</p>
+          <div id="cmpCalc"></div>
+        </div>
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-1">Compare horses</h2>
+          <p class="text-[11px] text-gray-500 mb-4">Up to four horses from today's card or the database: who rates best at the trip and going, by how many lengths, and who has improvement on their side.</p>
+          <div id="cmpBody"></div>
+        </div>
+      </section>
+
       <!-- TRACK RECORD -->
       <section id="section-record" class="hidden space-y-4">
         <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
@@ -235,6 +252,7 @@
           <h2 class="text-white font-black text-xl uppercase tracking-widest">How to read it</h2>
           <p><b class="text-white">Form L</b>: the horse's expected run today in lengths against the typical winner of this class at this level of track (metro, provincial, country). <b class="text-emerald-400">Green</b> 0 or better = good enough to win. <b class="text-amber-300">Yellow</b> = within 2 lengths under: around the mark, needs a little improvement or a soft race. <b class="text-red-400">Red</b> = more than 2 lengths under. So &minus;2.3L means it rates about 2&frac13; lengths behind a typical winner of today's race.</p>
           <p><b class="text-white">Next to the name</b>: its average rating over the last 5 rated runs (in brackets), the Pattern Lab angles (▲ market under-rates, ▼ over-rates), and today's track condition: <b class="text-emerald-400">✓</b> suited (wins 25%+ or places half the time there, or rates 2+ points better there), <b class="text-amber-300">~</b> fair, <b class="text-red-400">✗</b> poor (3+ runs there without a win and rarely placing), <b>?</b> never raced on it. Click the horse for its full dry / soft / heavy / synthetic record.</p>
+          <p><b class="text-white">Compare Horses</b> (left menu, or ⚖ Compare above the Odds Matrix): a ratings-to-lengths calculator for any distance, and a side-by-side of up to four horses. It shows the expected rating at the trip and going you pick (same weighting as Form L), lengths between each pair, best distance, track condition and prep-stage averages, improvement signals (prep pattern, trend, headroom to its best, trip/going suitability) and an overlaid chart of their last 12 rated runs.</p>
           <p><b class="text-white">Lengths to find</b>: under the Odds Matrix. Every runner in price order with how many lengths it is behind (or ahead of) the favourite and the top-rated, on its last start, its last-3 average or today's expected run.</p>
           <p><b class="text-white">Meeting Review → ALL</b>: the whole day across every meeting: winners with our price and rank, favourites and our top picks, value-flag P&amp;L, highest-rated runs, ground made, horses to follow, upsets and beaten favourites.</p>
           <p><b class="text-white">Rated runs</b>: the small boxes under each horse are its last 5 Form King ratings, oldest to newest (last start on the right, <sup>w</sup> = won), coloured the same way against today's winning par. Hover a box for the run and how many lengths it was off the par.</p>
@@ -265,6 +283,7 @@
 
 <script src="features.js"></script>
 <script src="race-tabs.js"></script>
+<script src="compare.js"></script>
 <script>
   const SUPABASE_URL = "https://xquwxvxdoaolggvilqkv.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_Wo3V2pBXOVWXrsnjFxkAWg_o_ym_-NS";
@@ -717,12 +736,13 @@
 
   // ---------- tabs ----------
   function switchTab(tab) {
-    ['racing', 'results', 'horses', 'lab', 'record', 'guide'].forEach(t => {
+    ['racing', 'results', 'horses', 'compare', 'lab', 'record', 'guide'].forEach(t => {
       document.getElementById('section-' + t).classList.toggle('hidden', t !== tab);
       document.getElementById('tab-' + t + '-btn').classList.toggle('active', t === tab);
       document.getElementById('mtab-' + t + '-btn').classList.toggle('active', t === tab);
     });
     if (tab === 'lab') loadLab();
+    if (tab === 'compare') renderCompare();
     if (tab === 'record') loadRecord();
     if (tab === 'horses') setTimeout(() => document.getElementById('horseSearchBox').focus(), 50);
   }
