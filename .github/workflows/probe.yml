@@ -1,0 +1,23 @@
+# One-off data probes (prints structure and counts only).
+name: Probe data sources
+on:
+  workflow_dispatch:
+    inputs:
+      meetings:
+        description: "Form King meeting ids to try (space separated; 5 credits each if found)"
+        required: false
+        default: ""
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - env:
+          FORMKING_API_KEY: ${{ secrets.FORMKING_API_KEY }}
+          FORMKING_BASE_URL: ${{ secrets.FORMKING_BASE_URL }}
+        run: python tools/probe.py ${{ inputs.meetings }}
