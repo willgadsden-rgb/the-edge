@@ -387,10 +387,12 @@ function renderPastRace(raceId, horse, rows) {
     <div class="flex flex-wrap gap-1.5 mb-4">
       ${chip(`📏 ${h.distance ?? '–'}m`)}${h.restrictions ? chip(`🏷️ ${esc(h.restrictions)}`) : ''}${h.going ? chip(`🌤️ ${esc(h.going)}`) : ''}
       ${h.rail ? chip(`🛤️ ${esc(h.rail)}`) : ''}${h.prize_money ? chip(`💰 $${Math.round(h.prize_money).toLocaleString()}`) : ''}
-      ${chip(`${rows.length} runners on file${h.field_size && h.field_size > rows.length ? ' of ' + h.field_size : ''}`, 'What we hold for this race. Fewer than the field means the rest have not been pulled yet.')}
+      ${chip(`${rows.length} runner${rows.length === 1 ? '' : 's'} on file${h.field_size && h.field_size > rows.length ? ' of ' + h.field_size : ''}`, 'What we hold for this race. Fewer than the field means the others have never raced at a meeting we hold.')}
       ${best !== null ? chip(`⭐ Best rating ${num(best, 1)}`, 'The highest rating run in the race — often not the winner') : ''}
       ${sinceRuns ? chip(`🏆 ${since} winner${since === 1 ? '' : 's'} out of it since`, `${sinceRuns} starts by these runners since this race`) : ''}
     </div>
+    ${h.field_size && rows.length < h.field_size * 0.6
+      ? `<p class="text-[11px] text-amber-300 mb-3">We only hold ${rows.length} of the ${h.field_size} runners${(h.state && h.state !== 'VIC') ? ` — this was a ${esc(h.state)} meeting, and our database is Victorian` : ''}. The rest turn up here once they race at a meeting we hold.</p>` : ''}
     ${winner && best !== null && winner.wfa_rating && winner.wfa_rating < best - 0.5
       ? `<p class="text-[11px] text-amber-300 mb-3">The winner wasn't the best run in the race — ${esc(strongest[0])} rated higher. Worth a look next start.</p>` : ''}
     <div class="overflow-x-auto"><table class="w-full text-left font-mono-numbers text-xs">
