@@ -22,4 +22,5 @@ jobs:
       - run: pip install -r requirements.txt
       - env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python tools/inspect_raw.py "${{ inputs.ref }}" ${{ inputs.mode }}
+        run: |
+          if [ "${{ inputs.mode }}" = "betfair" ]; then python tools/bf_peek.py "${{ inputs.ref }}"; else python tools/inspect_raw.py "${{ inputs.ref }}" ${{ inputs.mode }}; fi
