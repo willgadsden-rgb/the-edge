@@ -414,3 +414,81 @@ function renderPastRace(raceId, horse, rows) {
     <p class="text-[10px] text-gray-500 mt-2">Ratings are on the same 0–100 scale as the cards, so the field here can be read straight against today's par. Green is within a length of the best run in the race.</p>`;
 }
 window.addEventListener('keydown', e => { if (e.key === 'Escape') closePast(); });
+
+// ---------------------------------------------------------------- how the track is playing
+// Today's winners as they come in, and the last few meetings at the same track.
+// If the fence and the leaders are winning, a horse that did it the hard way
+// deserves an upgrade — and one that got the run of the race does not.
+const BIAS = { track: null, recent: null };
+
+function barThird(bar, field) {
+  if (!bar || !field || field < 5) return null;
+  const t = Math.ceil(field / 3);
+  return bar <= t ? 'inside' : bar <= 2 * t ? 'middle' : 'wide';
+}
+function zoneOfSettle(s, field) {
+  if (!s || !field) return null;
+  return s === 1 ? 'led' : s <= 3 ? 'handy' : s <= Math.ceil(field * 0.6) ? 'midfield' : 'back';
+}
+function biasLine(items, label) {
+  const n = items.length;
+  if (!n) return '';
+  const count = k => items.filter(x => x === k).length;
+  const pct = k => Math.round(count(k) / n * 100);
+  const parts = label === 'draw'
+    ? [['inside', 'inside third'], ['middle', 'middle third'], ['wide', 'outside third']]
+    : [['led', 'led'], ['handy', 'handy'], ['midfield', 'midfield'], ['back', 'from the back']];
+  // Don't call a bias off a handful of races: a third of winners come from each
+  // third of the barriers by chance alone.
+  const strong = parts.filter(([k]) => n >= 8 && pct(k) >= (label === 'draw' ? 50 : 45));
+  return `<div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+    <span class="text-gray-500 uppercase tracking-widest w-20">${label === 'draw' ? 'Barriers' : 'Run style'}</span>
+    ${parts.map(([k, t]) => `<span class="pill ${strong.some(s => s[0] === k) ? 'sect-green' : 'bg-[#0d1117] border border-[#1e2638] text-gray-400'} py-1">${t} ${count(k)}<span class="opacity-60">/${n}</span></span>`).join('')}
+    ${strong.length ? `<span class="text-emerald-300">← ${strong.map(s => s[1]).join(' and ')} on top</span>` : n >= 8 ? '<span class="text-gray-500">spread evenly — no bias worth playing</span>' : `<span class="text-gray-500">${n} winner${n === 1 ? '' : 's'} is too few to call a bias</span>`}
+  </div>`;
+}
+
+async function renderBias() {
+  const box = document.getElementById('biasBoard'); if (!box) return;
+  const m = S.meeting || {}; if (!m.track) { box.innerHTML = ''; return; }
+  // Today: winners of the races already run on this card.
+  const draws = [], styles = [], sps = [], favs = [];
+  S.races.filter(r => r.result_in).forEach(race => {
+    const rows = (S.runners[race.race_id] || []);
+    const w = rows.find(r => r.finish_pos === 1); if (!w) return;
+    const field = race.field_size || rows.filter(r => !r.scratched).length;
+    const d = barThird(w.barrier, field); if (d) draws.push(d);
+    const z = zoneOfSettle(w.settle_rank, field); if (z) styles.push(z);
+    if (w.result_sp) sps.push(w.result_sp);
+    const fav = rows.filter(r => !r.scratched && r.market_price).sort((a, b) => a.market_price - b.market_price)[0];
+    if (fav) favs.push(fav.horse_name === w.horse_name ? 1 : 0);
+  });
+  if (BIAS.track !== m.track) {
+    BIAS.track = m.track; BIAS.recent = null;
+    try { const { data, error } = await sb.rpc('edge_track_recent', { p_track: m.track, p_days: 90 }); if (!error) BIAS.recent = data || []; } catch (e) {}
+  }
+  const rec = (BIAS.recent || []).filter(x => x.race_date !== S.date);
+  const days = [...new Set(rec.map(x => x.race_date))].slice(0, 3);
+  const last = rec.filter(x => days.includes(x.race_date));
+  const rDraw = last.map(x => barThird(x.barrier, x.field_size)).filter(Boolean);
+  const rStyle = last.map(x => zoneOfSettle(x.settle_pos, x.field_size)).filter(Boolean);
+  const avgSp = sps.length ? sps.reduce((a, b) => a + b, 0) / sps.length : null;
+  box.innerHTML = `
+    <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-5">
+      <div class="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+        <h3 class="text-white font-black text-lg">How ${esc(m.track)} is playing</h3>
+        <span class="text-[11px] text-gray-500">${esc(m.going || '')}${m.rail ? ' · rail ' + esc(m.rail) : ''}</span>
+      </div>
+      <div class="space-y-1.5 mb-3">
+        <div class="text-[10px] text-gray-500 uppercase tracking-widest">Today · ${draws.length || styles.length ? (S.races.filter(r => r.result_in).length + ' race' + (S.races.filter(r => r.result_in).length === 1 ? '' : 's') + ' run') : 'nothing run yet'}</div>
+        ${draws.length ? biasLine(draws, 'draw') : '<div class="text-[11px] text-gray-500">The first result will start this off.</div>'}
+        ${styles.length ? biasLine(styles, 'style') : ''}
+        ${avgSp ? `<div class="text-[11px] text-gray-400">Winners averaging <b class="text-white font-mono-numbers">${money(avgSp)}</b>${favs.length ? ` · favourites ${favs.reduce((a, b) => a + b, 0)}/${favs.length}` : ''}${avgSp > 9 ? " — an outsiders' day so far, be careful backing short ones" : avgSp < 4.5 ? ' — form is holding up' : ''}</div>` : ''}
+      </div>
+      <div class="space-y-1.5 border-t border-[#1e2638] pt-3">
+        <div class="text-[10px] text-gray-500 uppercase tracking-widest">Last ${days.length} meeting${days.length === 1 ? '' : 's'} here${days.length ? ' · ' + days.map(esc).join(', ') : ''}</div>
+        ${rDraw.length ? biasLine(rDraw, 'draw') + biasLine(rStyle, 'style') : '<div class="text-[11px] text-gray-500">No recent meetings at this track in the database yet.</div>'}
+      </div>
+      <p class="text-[10px] text-gray-500 mt-2">Read it the other way too: a horse that won against the bias is better than it looks, and one that got every favour is worse. Settling positions come in with the ratings, so today's run-style line fills in through the evening.</p>
+    </div>`;
+}

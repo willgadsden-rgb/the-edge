@@ -225,3 +225,29 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.edge_past_race(text) TO anon, authenticated;
+
+
+-- How a track has been playing lately: every winner at that track in the last
+-- N days with its barrier, where it settled, the going and the rail. The site
+-- turns this into "leaders are winning here" / "wide draws are no good".
+CREATE OR REPLACE FUNCTION public.edge_track_recent(p_track text, p_days integer DEFAULT 60)
+RETURNS TABLE (race_date text, meeting_id text, race_id text, distance integer, going text, rail text,
+               horse_name text, barrier integer, field_size integer, settle_pos integer,
+               pos_800 integer, pos_400 integer, sp double precision, wfa_rating double precision)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
+  WITH fs AS (
+    SELECT r.race_id, max(r.field_size) AS fs, max(r.barrier) AS bar
+    FROM edge.runs r JOIN edge.races ra USING (race_id)
+    WHERE lower(ra.track) = lower(p_track) AND ra.race_date >= to_char(current_date - p_days, 'YYYY-MM-DD')
+    GROUP BY r.race_id
+  )
+  SELECT ra.race_date, ra.meeting_id, ra.race_id, ra.distance, ra.going, ra.rail,
+         r.horse_name, r.barrier, COALESCE(r.field_size, ra.field_size, fs.fs, fs.bar),
+         r.settle_pos, r.pos_800, r.pos_400, r.sp, NULLIF(r.wfa_rating, 0)
+  FROM edge.runs r JOIN edge.races ra USING (race_id) JOIN fs USING (race_id)
+  WHERE r.finish_pos = 1 AND lower(ra.track) = lower(p_track)
+    AND ra.race_date >= to_char(current_date - p_days, 'YYYY-MM-DD')
+  ORDER BY ra.race_date DESC, ra.race_number
+$$;
+
+GRANT EXECUTE ON FUNCTION public.edge_track_recent(text, integer) TO anon, authenticated;

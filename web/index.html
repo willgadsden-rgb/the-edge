@@ -107,6 +107,7 @@
         <!-- ALL RACES -->
         <div id="view-all-races" class="hidden space-y-6">
           <div id="playsBoard"></div>
+          <div id="biasBoard" class="mt-6"></div>
           <div class="bg-[#11151d] p-6 rounded-xl border border-[#1e2638] shadow-2xl">
             <h3 class="text-white font-black text-xl mb-1">Card summary</h3>
             <p class="text-[11px] text-gray-500 mb-3">Written automatically from the numbers below: top of our book, best form, likely leader and value per race.</p>
@@ -505,6 +506,7 @@
     document.getElementById('cardSummary').innerHTML = lines.join('') || '<div class="text-gray-500">No races.</div>';
     document.getElementById('allRacesCards').innerHTML = cards.join('');
     renderPlays();
+    renderBias();
   }
 
   function zoneShort(z) {
