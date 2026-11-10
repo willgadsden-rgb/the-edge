@@ -29,17 +29,20 @@ DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public'
 -- Read-only functions the website calls (Supabase RPC). SECURITY DEFINER so the
 -- anon key can read the edge history through them without table access.
 
+-- Columns changed (race_id and winners-out-of-the-race added), so drop first.
+DROP FUNCTION IF EXISTS public.edge_horse_runs(text);
 CREATE OR REPLACE FUNCTION public.edge_horse_runs(p_name text)
 RETURNS TABLE (race_date text, track text, state text, distance integer, class_band text, going text,
                finish_pos integer, field_size integer, margin double precision, weight double precision,
                barrier integer, jockey text, settle_pos integer, pos_800 integer, pos_400 integer,
                sp double precision, bsp double precision, wfa_rating double precision,
-               race_in_prep integer, days_since_prev integer, stewards_comment text, race_name text)
+               race_in_prep integer, days_since_prev integer, stewards_comment text, race_name text,
+               race_id text, next_runs integer, next_wins integer)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
   SELECT ra.race_date, ra.track, ra.state, ra.distance, ra.class_band, ra.going,
          r.finish_pos, COALESCE(r.field_size, ra.field_size), r.margin, r.weight, r.barrier, r.jockey,
          r.settle_pos, r.pos_800, r.pos_400, r.sp, r.bsp, NULLIF(r.wfa_rating, 0), r.race_in_prep,
-         r.days_since_prev, r.stewards_comment, ra.race_name
+         r.days_since_prev, r.stewards_comment, ra.race_name, r.race_id, r.next_runs, r.next_wins
   FROM edge.runs r JOIN edge.races ra USING (race_id)
   WHERE lower(r.horse_name) = lower(p_name) AND r.finish_pos IS NOT NULL
   ORDER BY ra.race_date DESC
@@ -195,3 +198,30 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.edge_model_report(text) TO anon, authenticated;
+
+
+-- One past race in full: the header plus every runner we hold, so a last-start
+-- line on a card can open the race it came out of.
+CREATE OR REPLACE FUNCTION public.edge_past_race(p_race_id text)
+RETURNS TABLE (race_id text, meeting_id text, race_date text, track text, state text,
+               race_number integer, race_name text, distance integer, restrictions text,
+               going text, rail text, prize_money double precision, field_size integer,
+               horse_name text, runner_number integer, barrier integer, weight double precision,
+               jockey text, finish_pos integer, margin double precision, wfa_rating double precision,
+               settle_pos integer, pos_800 integer, pos_400 integer, sp double precision,
+               bsp double precision, stewards_comment text, gear text, race_in_prep integer,
+               days_since_prev integer, next_runs integer, next_wins integer, source text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
+  SELECT rc.race_id, rc.meeting_id, rc.race_date, rc.track, rc.state, rc.race_number, rc.race_name,
+         rc.distance, rc.restrictions, rc.going, rc.rail, rc.prize_money,
+         COALESCE(rc.field_size, MAX(r.field_size) OVER ()),
+         r.horse_name, r.runner_number, r.barrier, r.weight, r.jockey, r.finish_pos, r.margin,
+         NULLIF(r.wfa_rating, 0), r.settle_pos, r.pos_800, r.pos_400, r.sp, r.bsp,
+         r.stewards_comment, r.gear, r.race_in_prep, r.days_since_prev, r.next_runs, r.next_wins, r.source
+  FROM edge.races rc
+  LEFT JOIN edge.runs r ON r.race_id = rc.race_id
+  WHERE rc.race_id = p_race_id
+  ORDER BY r.finish_pos NULLS LAST, r.runner_number
+$$;
+
+GRANT EXECUTE ON FUNCTION public.edge_past_race(text) TO anon, authenticated;

@@ -491,7 +491,9 @@ function renderHorse(name, runs, ctx, source) {
         <th>Fin</th><th>Margin</th><th>Settled</th><th>800</th><th>400</th><th>Rating</th><th>SP</th><th class="text-left">Jockey</th><th class="text-left">Stewards</th></tr></thead>
       <tbody>${runs.map(x => `
         <tr class="border-t border-[#1e2638]">
-          <td class="py-2 pr-2 whitespace-nowrap">${esc(x.race_date || '')}</td><td class="font-sans">${esc(x.track || '')}</td><td class="text-center">${x.distance ?? ''}</td>
+          <td class="py-2 pr-2 whitespace-nowrap">${esc(x.race_date || '')}</td>
+          <td class="font-sans">${x.race_id ? `<button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" data-tip="Open this race in full" onclick='openPastRace(${jsq(x.race_id)}, ${jsq(name)})'>${esc(x.track || '')}</button>` : esc(x.track || '')}</td>
+          <td class="text-center">${x.distance ?? ''}</td>
           <td>${esc(x.going || '')}</td><td class="text-center">${STAGE_OF(x.race_in_prep)}</td><td class="text-center">${x.barrier ?? ''}</td><td class="text-center">${num(x.weight, 1)}</td>
           <td class="text-center ${x.finish_pos === 1 ? 'text-emerald-400 font-bold' : ''}">${x.finish_pos ?? ''}${x.field_size ? '/' + x.field_size : ''}</td>
           <td class="text-center">${x.margin === null || x.margin === undefined ? '' : x.finish_pos === 1 ? signed(x.margin, 1) : num(Math.abs(x.margin), 1)}</td>

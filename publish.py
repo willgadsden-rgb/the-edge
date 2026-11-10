@@ -233,7 +233,7 @@ def _last_runs(runs):
             "settle": r.get("settle"), "jockey": r.get("jockey"), "comment": r.get("comment"),
             "class": r.get("class"), "rname": r.get("rname"), "next_wins": r.get("next_wins"),
             "next_runs": r.get("next_runs"), "pos800": r.get("pos800"), "pos400": r.get("pos400"),
-            "wt": r.get("wt"), "barrier": r.get("barrier"),
+            "wt": r.get("wt"), "barrier": r.get("barrier"), "rid": r.get("rid"), "mid": r.get("mid"),
         })
     return out
 

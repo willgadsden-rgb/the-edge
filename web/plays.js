@@ -332,3 +332,85 @@ async function syncAngleTags() {
     if (typeof renderView === 'function' && S.races.length) renderView();
   } catch (e) {}
 }
+
+// ---------------------------------------------------------------- one past race
+// A last-start line opens the race it came out of: the whole field, what each
+// one rated that day, where they were at the 800m and 400m, and what they have
+// done since. This is how you tell a strong race from a weak one.
+function pastOverlay() {
+  let ov = document.getElementById('pastOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'pastOverlay';
+    ov.className = 'fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto hidden';
+    ov.innerHTML = `<div class="min-h-full flex items-start justify-center p-3 md:p-8" onclick="if(event.target===this)closePast()">
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl shadow-2xl w-full max-w-6xl p-5 md:p-7">
+          <div class="flex justify-end"><button onclick="closePast()" class="text-gray-400 hover:text-white text-2xl leading-none">&times;</button></div>
+          <div id="pastBody"></div>
+        </div></div>`;
+    document.body.appendChild(ov);
+  }
+  return ov;
+}
+function closePast() { const o = document.getElementById('pastOverlay'); if (o) o.classList.add('hidden'); document.body.style.overflow = ''; }
+
+async function openPastRace(raceId, horse) {
+  if (!raceId) return;
+  const ov = pastOverlay(); ov.classList.remove('hidden'); document.body.style.overflow = 'hidden';
+  const body = document.getElementById('pastBody');
+  body.innerHTML = '<div class="p-10 text-center text-gray-400">Loading the race…</div>';
+  let rows = [];
+  try { const { data, error } = await sb.rpc('edge_past_race', { p_race_id: raceId }); if (error) throw error; rows = data || []; } catch (e) { rows = []; }
+  renderPastRace(raceId, horse, rows);
+}
+
+function renderPastRace(raceId, horse, rows) {
+  const body = document.getElementById('pastBody');
+  if (!rows.length) {
+    body.innerHTML = `<h2 class="text-white font-black text-xl mb-2">We don't hold that race yet</h2>
+      <p class="text-sm text-gray-400">${esc(raceId)} isn't in the history database. Meetings are pulled as they're raced, and older ones as they're backfilled — press Sync Data after racing, or ask for that meeting to be pulled.</p>`;
+    return;
+  }
+  const h = rows[0];
+  const rated = rows.filter(r => r.wfa_rating);
+  const best = rated.length ? Math.max(...rated.map(r => r.wfa_rating)) : null;
+  const winner = rows.find(r => r.finish_pos === 1);
+  const since = rows.reduce((a, r) => a + (r.next_wins || 0), 0);
+  const sinceRuns = rows.reduce((a, r) => a + (r.next_runs || 0), 0);
+  const strongest = rated.slice().sort((a, b) => b.wfa_rating - a.wfa_rating).slice(0, 3).map(r => r.horse_name);
+  const cls = v => v === null || v === undefined || best === null ? 'text-gray-300'
+    : v >= best - 1 ? 'text-emerald-400 font-bold' : v >= best - 4 ? 'text-emerald-300' : v >= best - 8 ? 'text-amber-300' : 'text-red-400';
+  const chip = (t, tip = '') => `<span class="pill bg-[#0d1117] border border-[#1e2638] text-gray-300 text-[11px] py-1" data-tip="${esc(tip)}">${t}</span>`;
+  body.innerHTML = `
+    <h2 class="text-white font-black text-2xl">${esc(h.track || '')} ${h.race_number ? 'R' + h.race_number : ''} · ${esc(h.race_date || '')}</h2>
+    <div class="text-sm text-gray-400 mb-2">${esc(h.race_name || '')}</div>
+    <div class="flex flex-wrap gap-1.5 mb-4">
+      ${chip(`📏 ${h.distance ?? '–'}m`)}${h.restrictions ? chip(`🏷️ ${esc(h.restrictions)}`) : ''}${h.going ? chip(`🌤️ ${esc(h.going)}`) : ''}
+      ${h.rail ? chip(`🛤️ ${esc(h.rail)}`) : ''}${h.prize_money ? chip(`💰 $${Math.round(h.prize_money).toLocaleString()}`) : ''}
+      ${chip(`${rows.length} runners on file${h.field_size && h.field_size > rows.length ? ' of ' + h.field_size : ''}`, 'What we hold for this race. Fewer than the field means the rest have not been pulled yet.')}
+      ${best !== null ? chip(`⭐ Best rating ${num(best, 1)}`, 'The highest rating run in the race — often not the winner') : ''}
+      ${sinceRuns ? chip(`🏆 ${since} winner${since === 1 ? '' : 's'} out of it since`, `${sinceRuns} starts by these runners since this race`) : ''}
+    </div>
+    ${winner && best !== null && winner.wfa_rating && winner.wfa_rating < best - 0.5
+      ? `<p class="text-[11px] text-amber-300 mb-3">The winner wasn't the best run in the race — ${esc(strongest[0])} rated higher. Worth a look next start.</p>` : ''}
+    <div class="overflow-x-auto"><table class="w-full text-left font-mono-numbers text-xs">
+      <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider"><tr>
+        <th class="p-2">Fin</th><th class="p-2 font-sans">Horse</th><th class="p-2">Bar</th><th class="p-2">Wt</th><th class="p-2 font-sans">Jockey</th>
+        <th class="p-2">Margin</th><th class="p-2">Settled</th><th class="p-2">800</th><th class="p-2">400</th><th class="p-2">Rating</th>
+        <th class="p-2">SP</th><th class="p-2">BSP</th><th class="p-2" data-tip="Starts and wins by this horse since this race">Since</th><th class="p-2 font-sans">Stewards</th></tr></thead>
+      <tbody class="divide-y divide-[#1e2638]">${rows.map(r => {
+        const me = horse && r.horse_name && r.horse_name.toLowerCase() === String(horse).toLowerCase();
+        return `<tr class="${me ? 'bg-[#ff6600]/10' : ''}">
+          <td class="p-2 font-bold ${r.finish_pos === 1 ? 'text-emerald-400' : 'text-gray-300'}">${r.finish_pos ?? '–'}</td>
+          <td class="p-2 font-sans"><button class="text-white font-bold hover:text-[#ff6600]" onclick='closePast();openHorse(${jsq(r.horse_name || "")})'>${esc(r.horse_name || '')}</button>${me ? ' <span class="text-[#ff6600] text-[10px]">◀</span>' : ''}</td>
+          <td class="p-2">${r.barrier ?? ''}</td><td class="p-2">${num(r.weight, 1)}</td><td class="p-2 font-sans text-gray-400">${esc(r.jockey || '')}</td>
+          <td class="p-2">${r.margin === null || r.margin === undefined ? '' : r.finish_pos === 1 ? signed(r.margin, 1) : num(Math.abs(r.margin), 1)}</td>
+          <td class="p-2">${r.settle_pos ?? ''}</td><td class="p-2">${r.pos_800 ?? ''}</td><td class="p-2">${r.pos_400 ?? ''}</td>
+          <td class="p-2 font-bold ${cls(r.wfa_rating)}">${num(r.wfa_rating, 1)}</td>
+          <td class="p-2">${money(r.sp)}</td><td class="p-2">${money(r.bsp)}</td>
+          <td class="p-2 ${r.next_wins ? 'text-emerald-400 font-bold' : 'text-gray-500'}">${r.next_runs ? (r.next_wins || 0) + '/' + r.next_runs : '–'}</td>
+          <td class="p-2 font-sans text-[11px] ${r.stewards_comment ? 'text-amber-300' : 'text-gray-600'}">${esc(r.stewards_comment || '')}</td>
+        </tr>`; }).join('')}</tbody></table></div>
+    <p class="text-[10px] text-gray-500 mt-2">Ratings are on the same 0–100 scale as the cards, so the field here can be read straight against today's par. Green is within a length of the best run in the race.</p>`;
+}
+window.addEventListener('keydown', e => { if (e.key === 'Escape') closePast(); });

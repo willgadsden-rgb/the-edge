@@ -393,6 +393,48 @@ def run_backfill(db, date_from, date_to, cap, states=("VIC",)):
     return 0
 
 
+def republish_window(db, date_from, date_to, cap, states=("VIC",)):
+    """Re-pull meetings we already hold form for and publish them to the site, so
+    Meeting Review can show past days. 5 credits a meeting; meetings already on
+    the site with results are skipped."""
+    rows = db.query(
+        "SELECT DISTINCT r.meeting_id, m.track, m.meeting_date FROM races r "
+        "JOIN entries e ON e.race_id = r.race_id "
+        "JOIN meetings m ON m.meeting_id = r.meeting_id "
+        "WHERE r.race_date >= ? AND r.race_date <= ? "
+        "AND NOT EXISTS (SELECT 1 FROM public.edge_races pr "
+        "                WHERE pr.meeting_id = r.meeting_id AND pr.result_in = 1) "
+        "ORDER BY m.meeting_date DESC", (date_from, date_to))
+    todo = [{"id": mid, "track": track, "date": d} for mid, track, d in rows if mid]
+    print("Publish window {} to {}: {} meeting(s) held but not on the site; doing up to {}".format(
+        date_from, date_to, len(todo), cap))
+    session = fk._session()
+    done = failed = credits = 0
+    cards = []
+    for m in todo[:cap]:
+        try:
+            card = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=m["id"]))
+            credits += 5
+            if states and (card.get("state") or "").upper() not in states:
+                print("  {} is {} - skipped".format(m["id"], card.get("state"))); continue
+            store_card(db, card, ref=m["id"], keep_raw=True, placings=False)
+            cards.append(card)
+            done += 1
+            if len(cards) >= 10:
+                publish_all(db, cards); cards = []
+        except Exception as exc:
+            failed += 1
+            db.conn.rollback()
+            print("  SKIPPED {} {}: {}".format(m["date"], m["id"], str(exc)[:120]), file=sys.stderr)
+            if failed >= 15 and done == 0:
+                print("Too many failures, stopping.", file=sys.stderr); break
+    if cards:
+        publish_all(db, cards)
+    print("Publish window done: {} meetings, {} failed, about {} credits; {} still to do".format(
+        done, failed, credits, max(0, len(todo) - cap)))
+    return 0
+
+
 def publish_all(db, cards):
     """Score and publish the pulled cards for the website (no extra credits).
     A publishing failure never undoes the harvest."""
@@ -429,6 +471,8 @@ def main(argv=None):
                     help="only re-pull recent meetings that are still missing results")
     ap.add_argument("--backfill", nargs=2, metavar=("FROM", "TO"),
                     help="pull old meetings in this date range as they stood on race day (5 credits each)")
+    ap.add_argument("--publish-window", nargs=2, metavar=("FROM", "TO"),
+                    help="re-pull meetings we hold in this range and publish them to the site (5 credits each)")
     args = ap.parse_args(argv)
 
     import os
@@ -440,6 +484,12 @@ def main(argv=None):
     db = HistoryDB()
     db.ensure_schema()
     print("History database: {}".format(db.kind))
+
+    if args.publish_window:
+        rc = republish_window(db, args.publish_window[0], args.publish_window[1],
+                              args.max if args.max is not None else 40)
+        db.close()
+        return rc
 
     if args.backfill:
         rc = run_backfill(db, args.backfill[0], args.backfill[1], args.max if args.max is not None else 100)

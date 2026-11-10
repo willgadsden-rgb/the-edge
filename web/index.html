@@ -717,7 +717,9 @@
             <th class="px-2">Fin</th><th class="px-2">Margin</th><th class="px-2">800/400</th><th class="px-2">Rating</th><th class="px-2">SP</th><th class="px-2" data-tip="Wins since, out of the runners in that race: a strong number means the race was a good one">Out of it</th><th class="text-left pl-3">Stewards</th></tr></thead>
           <tbody>${runs.map(x => `
             <tr class="border-t border-[#1e2638]">
-              <td class="py-2 pr-3 whitespace-nowrap">${esc(x.date || '')}</td><td class="pr-3 whitespace-nowrap">${esc(x.track || '')}</td><td class="text-center px-2">${x.dist ?? ''}</td>
+              <td class="py-2 pr-3 whitespace-nowrap">${esc(x.date || '')}</td>
+              <td class="pr-3 whitespace-nowrap">${x.rid ? `<button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" data-tip="Open this race: the whole field, what each one rated and what they have done since" onclick='event.stopPropagation();openPastRace(${jsq(x.rid)}, ${jsq(r.horse_name)})'>${esc(x.track || '')}</button>` : esc(x.track || '')}</td>
+              <td class="text-center px-2">${x.dist ?? ''}</td>
               <td class="px-2 whitespace-nowrap text-gray-400" data-tip="${esc(x.rname || '')}">${esc(x.class || '')}</td>
               <td class="px-2 whitespace-nowrap">${esc(x.going || '')}</td><td class="text-center px-2">${x.prep ?? ''}</td>
               <td class="text-center px-2 ${x.pos === 1 ? 'text-emerald-400 font-bold' : ''}">${x.pos ?? ''}${x.field ? '/' + x.field : ''}</td>

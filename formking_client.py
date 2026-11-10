@@ -220,6 +220,9 @@ def _last5(entry, limit=5):
         rating = next((ev.get(k) for k in ("weightForAgeRating", "exp", "benchmarkRating", "lws")
                        if isinstance(ev.get(k), (int, float))), None)
         runs.append({
+            # Form King's own ids for that race, so the site can open the full field.
+            "rid":       ev.get("raceId"),
+            "mid":       ev.get("meetingId"),
             "rating":    round(float(rating), 1) if rating is not None else None,
             "pos":       int(pos),
             "dist":      int(dist),
