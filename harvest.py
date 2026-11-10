@@ -476,6 +476,24 @@ def audit_window(db, date_from, date_to, cap, fix=True):
         known.append((d, track, mid, races, pub))
         if not pub:
             missing.append({"id": mid, "date": d, "track": track, "races": races})
+    # Cross-check against Betfair's own list of Victorian meetings: a meeting we
+    # never pulled, whose runners have not raced since, leaves no trace in our
+    # data at all - Stakes Day at Flemington was exactly that.
+    have_pub = {(d, _slug(t)) for d, t, _n in db.query(
+        "SELECT pr.meeting_date, COALESCE(pm.track, ''), COUNT(*) FROM public.edge_races pr "
+        "LEFT JOIN public.edge_meetings pm ON pm.meeting_id = pr.meeting_id "
+        "WHERE pr.meeting_date >= ? AND pr.meeting_date <= ? GROUP BY 1, 2", (date_from, date_to))}
+    have_cand = {(m["date"], _slug(m["track"])) for m in missing}
+    try:
+        for d, track in sorted(betfair_vic_meetings(date_from, date_to)):
+            if (d, _slug(track)) in have_pub or (d, _slug(track)) in have_cand:
+                continue
+            mid = _meeting_id_for(db, track, d)
+            missing.append({"id": mid, "date": d, "track": track, "races": 0})
+            have_cand.add((d, _slug(track)))
+    except Exception as exc:
+        print("  Betfair cross-check skipped: {}".format(str(exc)[:120]))
+    missing.sort(key=lambda m: m["date"], reverse=True)
     print("Audit {} to {}: {} Victorian meetings known, {} not on the website".format(
         date_from, date_to, len(known), len(missing)))
     for m in missing:
@@ -512,6 +530,56 @@ def audit_window(db, date_from, date_to, cap, fix=True):
     for d, track, n in after:
         print("  {} {:<22} {} races".format(d, track, n))
     return missing
+
+
+BF_MONTH = "https://betfair-datascientists.github.io/data/assets/ANZ_Thoroughbreds_{y}_{m:02d}.csv"
+
+
+def _slug(text):
+    return re.sub(r"[^a-z0-9]+", "", str(text or "").lower())
+
+
+def betfair_vic_meetings(date_from, date_to):
+    """Every Victorian thoroughbred meeting that actually ran in the window, from
+    Betfair's free ANZ results files. Free, complete and independent of us, which
+    is the point: our own tables only know the meetings we happened to pull."""
+    import csv
+    import io
+    import urllib.request
+    start = datetime.date.fromisoformat(date_from)
+    end = datetime.date.fromisoformat(date_to)
+    out = set()
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        url = BF_MONTH.format(y=y, m=m)
+        try:
+            with urllib.request.urlopen(url, timeout=120) as r:
+                raw = r.read().decode("utf-8", "replace")
+        except Exception as exc:
+            print("  Betfair {}-{:02d} not available: {}".format(y, m, str(exc)[:80]))
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+            continue
+        for row in csv.DictReader(io.StringIO(raw)):
+            if (row.get("STATE_CODE") or "").upper() != "VIC":
+                continue
+            d = (row.get("LOCAL_MEETING_DATE") or "")[:10].replace("/", "-")
+            if len(d) == 10 and d[4] != "-":                  # DD-MM-YYYY
+                d = "{}-{}-{}".format(d[6:], d[3:5], d[:2])
+            if date_from <= d <= date_to:
+                out.add((d, (row.get("TRACK") or "").strip()))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def _meeting_id_for(db, track, date_iso):
+    """Form King's id for a meeting: learn the track's prefix from any meeting of
+    the same track we already hold, else build it from the name."""
+    want = _slug(track)
+    for mid, t in db.query("SELECT meeting_id, track FROM races WHERE meeting_id IS NOT NULL AND track IS NOT NULL "
+                           "GROUP BY meeting_id, track"):
+        if _slug(t) == want and re.search(r"-\d{8}$", mid or ""):
+            return "{}-{}".format(mid[:-9], date_iso.replace("-", ""))
+    return "{}-{}".format(re.sub(r"[^a-z0-9]+", "-", str(track or "").lower()).strip("-"), date_iso.replace("-", ""))
 
 
 def publish_all(db, cards):
