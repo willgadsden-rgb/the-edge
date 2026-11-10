@@ -67,7 +67,17 @@ TABLES = {
                  ("race_in_career", "INTEGER"), ("days_since_prev", "INTEGER"),
                  ("stewards_comment", "TEXT"), ("gear", "TEXT"),
                  ("next_runs", "INTEGER"), ("next_wins", "INTEGER"), ("next_woe", "REAL"),
-                 ("source", "TEXT"), ("updated_at", "TEXT")],
+                 ("source", "TEXT"), ("updated_at", "TEXT"),
+                 # Bookmaker price moves on the day (opening fluc -> ... -> SP) and tote.
+                 ("open_fluc", "REAL"), ("top_fluc", "REAL"), ("flucs", "TEXT"), ("tote_win", "REAL")],
+    },
+    "trials": {
+        # Jump-outs and official trials shown on a runner's card (before that race).
+        "key": ["trial_id", "horse_name"],
+        "cols": [("trial_id", "TEXT"), ("horse_name", "TEXT"), ("trial_date", "TEXT"), ("track", "TEXT"),
+                 ("state", "TEXT"), ("distance", "INTEGER"), ("going", "TEXT"), ("trial_name", "TEXT"),
+                 ("finish_pos", "INTEGER"), ("margin", "REAL"), ("field_size", "INTEGER"),
+                 ("jockey", "TEXT"), ("time_ms", "INTEGER"), ("updated_at", "TEXT")],
     },
     "entries": {
         "key": ["race_id", "horse_name"],
@@ -95,6 +105,7 @@ OVERWRITE = {
     "races": {"going", "rail", "field_size", "jump_time", "updated_at"},
     "horses": {"trainer", "training_location", "last_seen"},
     "runs": {"finish_pos", "margin", "settle_pos", "pos_800", "pos_400", "sp", "bsp",
+             "open_fluc", "top_fluc", "flucs", "tote_win",
              "track_speed", "wfa_rating", "lws", "wfa_diff", "field_strength",
              "stewards_comment", "next_runs", "next_wins", "next_woe", "updated_at"},
     "entries": {"barrier", "weight", "apprentice_claim", "jockey", "scratched", "emergency",
@@ -152,8 +163,16 @@ class HistoryDB:
             cols.append("PRIMARY KEY ({})".format(", ".join(spec["key"])))
             prefix = PG_SCHEMA + "." if kind == "postgres" else ""
             out.append("CREATE TABLE IF NOT EXISTS {}{} ({})".format(prefix, name, ", ".join(cols)))
+        # Columns added after a table was first created.
+        for name, spec in TABLES.items():
+            prefix = PG_SCHEMA + "." if kind == "postgres" else ""
+            for col, typ in spec["cols"]:
+                if kind == "postgres":
+                    out.append("ALTER TABLE {}{} ADD COLUMN IF NOT EXISTS {} {}".format(
+                        prefix, name, col, "DOUBLE PRECISION" if typ == "REAL" else typ))
         idx = [("runs", "horse_name"), ("runs", "race_in_prep"), ("races", "race_date"),
-               ("races", "track"), ("entries", "horse_name"), ("odds_snapshots", "race_id")]
+               ("races", "track"), ("entries", "horse_name"), ("odds_snapshots", "race_id"),
+               ("races", "meeting_id"), ("trials", "horse_name")]
         for table, col in idx:
             prefix = PG_SCHEMA + "." if kind == "postgres" else ""
             out.append("CREATE INDEX IF NOT EXISTS {t}_{c}_idx ON {p}{t} ({c})".format(
@@ -164,6 +183,12 @@ class HistoryDB:
         cur = self.conn.cursor()
         for stmt in self.ddl(self.kind):
             cur.execute(stmt)
+        if self.kind == "sqlite":
+            for name, spec in TABLES.items():
+                have = {r[1] for r in cur.execute("PRAGMA table_info({})".format(name)).fetchall()}
+                for col, typ in spec["cols"]:
+                    if col not in have:
+                        cur.execute("ALTER TABLE {} ADD COLUMN {} {}".format(name, col, "BLOB" if typ == "BYTEA" else typ))
         self.conn.commit()
 
     # -- writes ---------------------------------------------------------------

@@ -78,10 +78,10 @@ def _gear(gear):
 
 
 # --- card -> rows ------------------------------------------------------------
-def parse_card(card, pulled_at=None):
+def parse_card(card, pulled_at=None, placings=True):
     """Turn one /b2c/meetings/{id} response into rows per history table."""
     pulled_at = pulled_at or _now_iso()
-    out = {t: [] for t in ("meetings", "races", "horses", "runs", "entries", "odds_snapshots")}
+    out = {t: [] for t in ("meetings", "races", "horses", "runs", "entries", "odds_snapshots", "trials")}
     meeting_date = _melb_date(card.get("date"))
 
     out["meetings"].append({
@@ -143,8 +143,23 @@ def parse_card(card, pulled_at=None):
                 "scratched": int(bool(e.get("scratched"))), "emergency": int(bool(e.get("emergency"))),
                 "fk_exp": _float(rt.get("exp")), "fk_peak": _float(rt.get("peak")),
                 "fk_peak12m": _float(rt.get("peak12m")), "fk_neural": _float(rt.get("neural")),
-                "profile_json": json.dumps(fk._profile(e)), "updated_at": pulled_at,
+                "profile_json": json.dumps(dict(fk._profile(e), benchmark=_float(e.get("benchmarkRating")),
+                                                first_starter=bool(e.get("firstStarter")), home_track=e.get("homeTrack"),
+                                                avg_prize=_float(e.get("averagePrizeMoney")), wfa_diff=_float(e.get("wfaDiff")),
+                                                trials=len(e.get("recentTrials") or []))),
+                "updated_at": pulled_at,
             })
+            for tr in e.get("recentTrials") or []:
+                if not tr.get("raceId"):
+                    continue
+                out["trials"].append({
+                    "trial_id": tr.get("raceId"), "horse_name": tr.get("horse") or name,
+                    "trial_date": _race_date(tr.get("raceId"), tr.get("date")), "track": tr.get("track"),
+                    "state": tr.get("state"), "distance": _int(tr.get("distance")), "going": tr.get("going"),
+                    "trial_name": tr.get("raceName"), "finish_pos": _int(tr.get("finishPosition")) or None,
+                    "margin": _float(tr.get("margin")), "field_size": _int(tr.get("numRunners")) or None,
+                    "jockey": tr.get("jockey"), "time_ms": _int(tr.get("timeInMillis")) or None, "updated_at": pulled_at,
+                })
             odds = e.get("odds") or {}
             if odds:
                 out["odds_snapshots"].append({
@@ -155,7 +170,7 @@ def parse_card(card, pulled_at=None):
                     "firm_or_drift": _float(odds.get("firmOrDrift")),
                 })
             for ev in e.get("pastEvents") or []:
-                _past_event(out, ev, name, pulled_at)
+                _past_event(out, ev, name, pulled_at, placings)
             hr = e.get("horseResult") or {}
             pos = _int(hr.get("finishPosition"))
             if pos and not e.get("scratched"):
@@ -170,6 +185,9 @@ def parse_card(card, pulled_at=None):
                     "field_size": starters, "sp": _float(hr.get("startingPrice")),
                     "bsp": _float(hr.get("betfairStartingPrice")),
                     "race_in_prep": _int(e.get("raceInPrep")), "days_since_prev": _int(e.get("daysSinceLastRace")),
+                    "open_fluc": _float((hr.get("officialFlucs") or [None])[0]), "top_fluc": _float(hr.get("topFluc")) or None,
+                    "flucs": json.dumps(hr.get("officialFlucs")) if hr.get("officialFlucs") else None,
+                    "tote_win": _float(hr.get("bestToteWin")) or None,
                     "source": "result", "updated_at": pulled_at,
                 })
 
@@ -178,7 +196,7 @@ def parse_card(card, pulled_at=None):
     return out
 
 
-def _past_event(out, ev, horse_name, pulled_at):
+def _past_event(out, ev, horse_name, pulled_at, with_placings=True):
     """One past run -> a race row, a run row, minimal meeting row, placings."""
     race_id = ev.get("raceId")
     if not race_id or ev.get("trial"):
@@ -220,7 +238,7 @@ def _past_event(out, ev, horse_name, pulled_at):
     # Placings give lengths BEHIND the winner (winner 0.0); convert to the
     # pastEvents convention used everywhere: winner = +winning margin, others =
     # -lengths beaten. The winning margin is the 2nd placegetter's margin.
-    placings = ev.get("placings") or []
+    placings = (ev.get("placings") or []) if with_placings else []
     second = next((_float(p.get("margin")) for p in placings
                    if _int(p.get("finishPosition")) == 2), None)
     for p in placings:
@@ -263,17 +281,17 @@ def _dedupe(table, rows):
 
 
 # --- store -------------------------------------------------------------------
-ORDER = ("meetings", "races", "horses", "runs", "entries", "odds_snapshots")
+ORDER = ("meetings", "races", "horses", "runs", "entries", "odds_snapshots", "trials")
 
 
-def store_card(db, card, pulled_at=None, ref=None, keep_raw=True):
+def store_card(db, card, pulled_at=None, ref=None, keep_raw=True, placings=True):
     """Save the raw card and upsert its rows. Returns {table: rows written}."""
     pulled_at = pulled_at or _now_iso()
     if keep_raw:
         body = zlib.compress(json.dumps(card, separators=(",", ":")).encode("utf-8"), 9)
         db.upsert("raw_payloads", [{"endpoint": "meeting", "ref": ref or card.get("id"),
                                     "pulled_at": pulled_at, "body_zlib": body}])
-    rows = parse_card(card, pulled_at)
+    rows = parse_card(card, pulled_at, placings)
     counts = {t: db.upsert(t, rows[t]) for t in ORDER}
     db.commit()
     return counts
@@ -332,6 +350,49 @@ def results_pending(db, today_iso, days=3):
     return [{"id": mid, "trackName": "{} ({}, results)".format(track, d), "date": d} for mid, track, d in rows]
 
 
+def backfill_candidates(db, date_from, date_to, states=("VIC",)):
+    """Meetings in the window that we know of (from horses' past runs) but have
+    never pulled as a card. Form King returns an old card as it stood on race
+    day: full field, opening and final prices, results, form as of that day."""
+    rows = db.query(
+        "SELECT m.meeting_id, m.track, m.state, m.meeting_date FROM meetings m "
+        "WHERE m.meeting_date >= ? AND m.meeting_date <= ? "
+        "AND NOT EXISTS (SELECT 1 FROM races r JOIN entries e ON e.race_id = r.race_id WHERE r.meeting_id = m.meeting_id) "
+        "ORDER BY m.meeting_date DESC", (date_from, date_to))
+    out = []
+    for mid, track, state, d in rows:
+        if not mid or not re.search(r"-\d{8}$", mid):
+            continue                                  # trials / jump-out meetings
+        if states and fk.meeting_state({"state": state, "trackName": track}) not in states:
+            continue
+        out.append({"id": mid, "trackName": track, "date": d})
+    return out
+
+
+def run_backfill(db, date_from, date_to, cap, states=("VIC",)):
+    session = fk._session()
+    todo = backfill_candidates(db, date_from, date_to, states)
+    print("Backfill {} to {}: {} meeting(s) not yet pulled; doing up to {}".format(date_from, date_to, len(todo), cap))
+    done = credits = failed = 0
+    for m in todo[:cap]:
+        try:
+            card = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=m["id"]))
+            credits += 5
+            if states and (card.get("state") or "").upper() not in states:
+                print("  {} is {} - skipped".format(m["id"], card.get("state"))); continue
+            counts = store_card(db, card, ref=m["id"], keep_raw=False, placings=False)
+            done += 1
+            print("  {} {} entries {} runs {}".format(m["date"], m["id"], counts.get("entries"), counts.get("runs")))
+        except Exception as exc:
+            failed += 1
+            db.conn.rollback()
+            print("  SKIPPED {}: {}".format(m["id"], str(exc)[:120]), file=sys.stderr)
+            if failed >= 15 and done == 0:
+                print("Too many failures, stopping.", file=sys.stderr); break
+    print("Backfill done: {} stored, {} failed, about {} credits; {} still to do".format(done, failed, credits, max(0, len(todo) - cap)))
+    return 0
+
+
 def publish_all(db, cards):
     """Score and publish the pulled cards for the website (no extra credits).
     A publishing failure never undoes the harvest."""
@@ -360,6 +421,8 @@ def main(argv=None):
     ap.add_argument("--no-publish", action="store_true", help="skip publishing scores for the website")
     ap.add_argument("--catchup-only", action="store_true",
                     help="only re-pull recent meetings that are still missing results")
+    ap.add_argument("--backfill", nargs=2, metavar=("FROM", "TO"),
+                    help="pull old meetings in this date range as they stood on race day (5 credits each)")
     args = ap.parse_args(argv)
 
     import os
@@ -371,6 +434,11 @@ def main(argv=None):
     db = HistoryDB()
     db.ensure_schema()
     print("History database: {}".format(db.kind))
+
+    if args.backfill:
+        rc = run_backfill(db, args.backfill[0], args.backfill[1], args.max if args.max is not None else 100)
+        db.close()
+        return rc
 
     if args.file:
         cards = []
