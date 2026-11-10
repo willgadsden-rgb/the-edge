@@ -170,9 +170,18 @@ def _class_name(restrictions, race_name):
 
 
 def _odds(entry):
-    """Current market price: average now, else best now, else opening."""
+    """Current market price: average now, else best now, else opening.
+
+    Once a race has been run the live market is gone, so the starting price is
+    the market. Without this an old or picnic meeting comes back with no priced
+    runners at all and never reaches the review.
+    """
     o = entry.get("odds") or {}
-    return o.get("avgNow") or o.get("bestNow") or o.get("avgOpen")
+    live = o.get("avgNow") or o.get("bestNow") or o.get("avgOpen")
+    if live:
+        return live
+    r = entry.get("horseResult") or {}
+    return _as_float(r.get("startingPrice")) or _as_float(r.get("betfairStartingPrice"))
 
 
 def _weight(entry):

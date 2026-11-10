@@ -6,10 +6,24 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   (already set)
 //   BET_PIN   optional: if set, a PIN is required to log or void a bet (not set = one click)
 const TARGET = 100, MAX_STAKE = 75;
+// The REST base, whatever shape the env var is in: a trailing slash or an
+// accidental /rest/v1 suffix both make PostgREST reject the path (PGRST125).
+const PROJECT = 'https://xquwxvxdoaolggvilqkv.supabase.co';
+function restBase(raw) {
+  let u = String(raw || '').trim().replace(/\s+/g, '');
+  if (!u) return PROJECT;
+  if (!/^https?:\/\//.test(u)) u = 'https://' + u;
+  try {
+    const parsed = new URL(u);
+    return parsed.origin;                         // drops any path, query or trailing slash
+  } catch (e) {
+    return PROJECT;
+  }
+}
 const json = (statusCode, body) => ({ statusCode, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) });
 
 exports.handler = async (event) => {
-  const url = String(process.env.SUPABASE_URL || '').trim().replace(/\/+$/, ''), key = process.env.SUPABASE_SERVICE_ROLE_KEY, pin = process.env.BET_PIN;
+  const url = restBase(process.env.SUPABASE_URL), key = process.env.SUPABASE_SERVICE_ROLE_KEY, pin = process.env.BET_PIN;
   if (!url || !key) return json(500, { error: 'SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set in Netlify.' });
   if (event.httpMethod !== 'POST') return json(405, { error: 'POST only' });
   let b; try { b = JSON.parse(event.body || '{}'); } catch (e) { return json(400, { error: 'Bad JSON' }); }

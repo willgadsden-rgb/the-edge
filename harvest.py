@@ -435,6 +435,83 @@ def republish_window(db, date_from, date_to, cap, states=("VIC",)):
     return 0
 
 
+VIC_TRACK_WORDS = (
+    "flemington caulfield moonee valley sandown pakenham cranbourne geelong ballarat bendigo "
+    "werribee kyneton seymour benalla wangaratta wodonga echuca swan hill mildura horsham "
+    "warrnambool hamilton casterton coleraine penshurst ararat stawell donald st arnaud "
+    "sale bairnsdale traralgon moe yarra valley healesville kilmore mornington racing.com "
+    "colac camperdown terang stony creek yea alexandra mansfield balnarring great western "
+    "avoca dunkeld edenhope manangatang murtoa nhill birchip charlton tatura wycheproof "
+    "hanging rock bright buchan corryong omeo"
+).split()
+
+
+def _is_vic(track, state=None):
+    if state:
+        return str(state).upper() == "VIC"
+    t = str(track or "").lower()
+    if not t or " - " in t:                       # overseas meetings read "G B - York"
+        return False
+    return any(w in t for w in VIC_TRACK_WORDS)
+
+
+def audit_window(db, date_from, date_to, cap, fix=True):
+    """Every Victorian meeting we have any trace of in the window, against what
+    the website actually holds. Anything missing is pulled and published.
+
+    Our own meetings table only knows meetings we pulled on the day, so this
+    works from the races table instead, which also carries meetings seen in
+    horses' past runs - that is how a meeting we missed at the time (a Form King
+    error, a cap, a day the harvest did not run) can still be found later.
+    """
+    rows = db.query(
+        "SELECT r.meeting_id, MIN(r.race_date), MIN(r.track), MAX(r.state), COUNT(DISTINCT r.race_id), "
+        "       (SELECT COUNT(*) FROM public.edge_races pr WHERE pr.meeting_id = r.meeting_id) "
+        "FROM races r WHERE r.race_date >= ? AND r.race_date <= ? AND r.meeting_id IS NOT NULL "
+        "GROUP BY r.meeting_id ORDER BY MIN(r.race_date) DESC", (date_from, date_to))
+    known, missing = [], []
+    for mid, d, track, state, races, pub in rows:
+        if not _is_vic(track, state):
+            continue
+        known.append((d, track, mid, races, pub))
+        if not pub:
+            missing.append({"id": mid, "date": d, "track": track, "races": races})
+    print("Audit {} to {}: {} Victorian meetings known, {} not on the website".format(
+        date_from, date_to, len(known), len(missing)))
+    for m in missing:
+        print("  MISSING {} {:<22} {} ({} races in our history)".format(m["date"], m["track"], m["id"], m["races"]))
+    if not fix or not missing:
+        return missing
+    session = fk._session()
+    done = failed = 0
+    cards = []
+    for m in missing[:cap]:
+        try:
+            card = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=m["id"]))
+            store_card(db, card, ref=m["id"], keep_raw=True, placings=False)
+            cards.append(card)
+            done += 1
+            if len(cards) >= 8:
+                publish_all(db, cards); cards = []
+        except Exception as exc:
+            failed += 1
+            db.conn.rollback()
+            print("  COULD NOT PULL {} {}: {}".format(m["date"], m["id"], str(exc)[:140]), file=sys.stderr)
+    if cards:
+        publish_all(db, cards)
+    print("Audit done: {} pulled, {} could not be pulled, about {} credits; {} left over the cap".format(
+        done, failed, done * 5, max(0, len(missing) - cap)))
+    # Say plainly what the website holds now, date by date.
+    after = db.query(
+        "SELECT meeting_date, track, COUNT(*) FROM public.edge_races "
+        "WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date, track "
+        "ORDER BY meeting_date DESC, track", (date_from, date_to))
+    print("On the website now: {} meetings".format(len(after)))
+    for d, track, n in after:
+        print("  {} {:<22} {} races".format(d, track, n))
+    return missing
+
+
 def publish_all(db, cards):
     """Score and publish the pulled cards for the website (no extra credits).
     A publishing failure never undoes the harvest."""
@@ -473,6 +550,9 @@ def main(argv=None):
                     help="pull old meetings in this date range as they stood on race day (5 credits each)")
     ap.add_argument("--publish-window", nargs=2, metavar=("FROM", "TO"),
                     help="re-pull meetings we hold in this range and publish them to the site (5 credits each)")
+    ap.add_argument("--audit", nargs=2, metavar=("FROM", "TO"),
+                    help="find every Victorian meeting in this range that the website is missing, and pull it")
+    ap.add_argument("--audit-only", action="store_true", help="list the gaps without spending credits")
     args = ap.parse_args(argv)
 
     import os
@@ -484,6 +564,12 @@ def main(argv=None):
     db = HistoryDB()
     db.ensure_schema()
     print("History database: {}".format(db.kind))
+
+    if args.audit:
+        audit_window(db, args.audit[0], args.audit[1],
+                     args.max if args.max is not None else 40, fix=not args.audit_only)
+        db.close()
+        return 0
 
     if args.publish_window:
         rc = republish_window(db, args.publish_window[0], args.publish_window[1],
