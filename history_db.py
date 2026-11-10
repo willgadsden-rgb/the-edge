@@ -138,8 +138,12 @@ class HistoryDB:
                 url = "postgresql://" + url
             import psycopg  # psycopg 3; only needed for Postgres
             self.kind = "postgres"
+            # Supabase caps a statement at 2 minutes by default; index builds and
+            # column adds on the grown tables need longer than that.
             self.conn = psycopg.connect(url, autocommit=False,
-                                        options="-c search_path={}".format(PG_SCHEMA))
+                                        options="-c search_path={} -c statement_timeout=900000 "
+                                                "-c lock_timeout=300000 "
+                                                "-c idle_in_transaction_session_timeout=0".format(PG_SCHEMA))
         else:
             self.kind = "sqlite"
             self.conn = sqlite3.connect(str(sqlite_path or SQLITE_PATH))
