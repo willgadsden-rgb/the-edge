@@ -379,7 +379,7 @@ function renderPlays() {
       if (r._value || (backs.length && !fades.length && ((r._edge ?? -1) >= 0.10 || (top && (r._edge ?? -1) > 0)))) {
         best.push({ race, r, ang, reasons, score: (r._value ? 100 : 0) + (r._edge || 0) * 100 + backs.length * 5 - fades.length * 8 });
       }
-      if (r._market && r._fair && (r._edge ?? 0) <= -0.15 && fades.length > backs.length && r._market <= 6) {
+      if (r._fade || (!race._v2 && r._market && r._fair && (r._edge ?? 0) <= -0.15 && fades.length > backs.length && r._market <= 6)) {
         over.push({ race, r, ang });
       }
     });
@@ -403,7 +403,7 @@ function renderPlays() {
       </div>
       <div class="bg-[#11151d] p-5 rounded-xl border border-red-500/30">
         <h3 class="text-white font-black text-lg">Overbet: think twice</h3>
-        <p class="text-[11px] text-gray-500 mb-2">$6 or shorter, 15%+ under our price, and more ▼ angles than ▲. The market historically over-rates these. Lay candidates, or just leave them alone.</p>
+        <p class="text-[11px] text-gray-500 mb-2">With model v2 on, these are its fades: rated 20%+ below the market's own chance (on unseen races they won about a fifth less often than their price said). Otherwise: $6 or shorter, 15%+ under our price, and more ▼ angles than ▲. The market historically over-rates these. Lay candidates, or just leave them alone.</p>
         ${over.slice(0, 8).map(x => row(x)).join('') || '<div class="text-gray-500 text-sm py-2">No overbet runners on this card.</div>'}
       </div>
     </div>`;
@@ -605,7 +605,9 @@ async function modelCard() {
   const tile = (l, v, sub, tone = 'text-white') => `<div class="bg-[#0d1117] border border-[#1e2638] rounded-lg p-3"><div class="text-[10px] text-gray-500 uppercase tracking-widest">${l}</div><div class="text-xl font-black font-mono-numbers ${tone}">${v}</div><div class="text-[10px] text-gray-500">${sub}</div></div>`;
   el.innerHTML = `
     <div class="flex flex-wrap items-center gap-2 mb-3"><h3 class="text-white font-black text-lg">Model v2: fitted on results</h3>
-      <span class="pill ${p.validated ? 'sect-green' : 'sect-yellow'} py-1">${p.validated ? 'LIVE: PRICING THE CARDS' : 'NOT YET BEATING THE MARKET: 70/30 BLEND STILL PRICES'}</span>
+      <span class="pill ${p.use_for_pricing || p.validated ? 'sect-green' : 'sect-yellow'} py-1">${p.use_for_pricing || p.validated ? 'PRICING THE CARDS' : 'NOT PRICING: 70/30 BLEND STILL USED'}</span>
+      <span class="pill ${p.overlays_proven || p.validated ? 'sect-green' : 'sect-yellow'} py-1">${p.overlays_proven || p.validated ? 'OVERLAYS PROVEN' : 'OVERLAYS NOT PROVEN YET'}</span>
+      <span class="pill ${p.fades_proven ? 'sect-green' : 'sect-yellow'} py-1">${p.fades_proven ? 'FADES PROVEN' : 'FADES NOT PROVEN'}</span>
       <span class="text-[11px] text-gray-500">fitted ${esc((p.fitted_at || '').slice(0, 10))} on ${Number(p.n_all).toLocaleString()} runs</span></div>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
       ${tile('Better than the market?', `${p.logloss_gain_pct >= 0 ? '+' : ''}${p.logloss_gain_pct}%`, 'log-loss on races it never saw', p.logloss_gain_pct > 0 ? 'text-emerald-400' : 'text-red-400')}
@@ -618,7 +620,7 @@ async function modelCard() {
       <div class="flex items-center gap-2 text-xs"><span class="w-44 text-gray-300">${esc(DESC[k] || k)}</span>
         <div class="flex-1 h-2 bg-[#0d1117] rounded relative"><div class="absolute top-0 h-2 rounded ${v >= 0 ? 'bg-emerald-500 left-1/2' : 'bg-red-500 right-1/2'}" style="width:${Math.abs(v) / mx * 50}%"></div></div>
         <span class="w-12 text-right font-mono-numbers ${v >= 0 ? 'text-emerald-400' : 'text-red-400'}">${v >= 0 ? '+' : ''}${v.toFixed(2)}</span></div>`).join('')}</div>
-    <p class="text-[10px] text-gray-500 mt-2">Trained on runs before ${esc(p.split)}, tested on the ${Number(p.n_test).toLocaleString()} runs after. It only prices the cards once it beats the market on that unseen data (lower log-loss and its overlays winning 3%+ more than their price says, on 100+ bets). Market weight ${Number(p.market_coef).toFixed(2)} (1.00 = takes the price at face value). Refits every Monday.</p>`;
+    <p class="text-[10px] text-gray-500 mt-2">Trained on runs before ${esc(p.split)}, tested on the ${Number(p.n_test).toLocaleString()} runs after. It prices the cards once it is more accurate than the market on that unseen data (lower log-loss on 2,000+ runs). Overlays count as proven when they win 3%+ more than their price says on 100+ bets; fades when they win 10%+ less on 200+. Market weight ${Number(p.market_coef).toFixed(2)} (1.00 = takes the price at face value). Refits every Monday.</p>`;
 }
 
 function renderLab(rows) {

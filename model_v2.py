@@ -206,7 +206,13 @@ def evaluate(df):
 
     o, b_, u = perf(ov), perf(base), perf(under)
     rel_ae = (o.get("ae", 0) / b_["ae"]) if b_.get("ae") else 0
-    validated = bool(ll_f < ll_m and o.get("n", 0) >= 100 and rel_ae >= 1.03)
+    validated = bool(ll_f < ll_m and o.get("n", 0) >= 100 and rel_ae >= 1.03)      # overlays proven
+    rel_under = (u.get("ae", 1) / b_["ae"]) if b_.get("ae") else 1
+    # More accurate than the market on unseen races -> it prices the cards (its
+    # probabilities beat both the market alone and the old 70/30 blend).
+    use_for_pricing = bool(ll_f < ll_m and len(test) >= 2000)
+    # Its unders win clearly less than their price says -> flag them as fades.
+    fades_proven = bool(u.get("n", 0) >= 200 and rel_under <= 0.90)
 
     # Refit on everything for live use.
     allmu, allsd = df[feats].mean(), df[feats].std().replace(0, 1.0)
@@ -224,7 +230,9 @@ def evaluate(df):
         "logloss_market": round(ll_m, 5), "logloss_model": round(ll_f, 5),
         "logloss_gain_pct": round((ll_m - ll_f) / ll_m * 100, 3),
         "overlays": o, "all_in_band": b_, "unders": u, "overlay_ae_vs_base": round(rel_ae, 3),
-        "validated": validated,
+        "validated": validated, "overlays_proven": validated,
+        "use_for_pricing": use_for_pricing, "fades_proven": fades_proven,
+        "under_ae_vs_base": round(rel_under, 3),
         "coefs": coefs, "intercept": intercept, "importance_per_sd": std_w,
         "market_coef": coefs["mkt"],
     }
@@ -269,7 +277,9 @@ def report(p):
         "Overlays (model 20%+ above the market, $2.20-$18): {}".format(p["overlays"]),
         "Every runner $2.20-$18:                            {}".format(p["all_in_band"]),
         "Unders (model 20%+ below the market):              {}".format(p["unders"]),
-        "Overlay A/E vs all runners: {:.3f}   VALIDATED: {}".format(p["overlay_ae_vs_base"], p["validated"]),
+        "Overlay A/E vs all runners: {:.3f}   overlays proven: {}".format(p["overlay_ae_vs_base"], p["validated"]),
+        "Under A/E vs all runners:   {:.3f}   fades proven: {}".format(p.get("under_ae_vs_base", 1), p.get("fades_proven")),
+        "Prices the cards: {}".format(p.get("use_for_pricing")),
         "Market weight (1 = trust the price fully): {:.3f}".format(p["market_coef"]),
         "Signal strength per 1 SD (positive = more winners than the price expects):"]
     for n, desc in FEATURES:

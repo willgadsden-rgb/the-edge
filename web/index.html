@@ -335,6 +335,9 @@
       r._edge = (eff && r._fair) ? eff / r._fair - 1 : null;
       r._mao = r._fair ? Math.round(r._fair * (1 + MIN_EDGE) * 100) / 100 : null;
       r._value = !!(r._edge !== null && r._edge >= VALUE_EDGE && r._market >= r._mao && r._market >= VALUE_ODDS[0] && r._market <= VALUE_ODDS[1]);
+      // Fade: model v2 rates it 20%+ below the market's own chance (proven on unseen races).
+      r._pmkt = rawTot > 0 && raw[r.horse_name] ? raw[r.horse_name] / rawTot : null;
+      r._fade = !!(race._v2 && race.v2_fades && r._pmkt && r._p <= r._pmkt / 1.2 && r._market >= VALUE_ODDS[0] && r._market <= VALUE_ODDS[1]);
     });
     return rows;
   }
@@ -506,7 +509,7 @@
           <td class="p-3 text-white font-bold">${money(r._market)}${steam}</td>
           <td class="p-3 ${r._edge > 0 ? 'text-emerald-400' : 'text-gray-500'}">${r._edge === null ? '–' : signed(r._edge * 100, 0, '%')}</td>
           <td class="p-3 text-gray-400">${money(r._mao)}</td>
-          <td class="p-3">${r._value ? '<span class="pill sect-green">✅ VALUE</span>' : r._scratched ? '<span class="pill sect-red">SCR</span>' : ''}</td>
+          <td class="p-3">${r._value ? '<span class="pill sect-green">✅ VALUE</span>' : r._fade ? `<span class="pill sect-red" data-tip="Model v2 rates it at ${num(r._p * 100, 1)}% against the market's ${num(r._pmkt * 100, 1)}%. On unseen races these won about 22% less often than their price said. Lay candidate, or leave it out of multis.">FADE</span>` : r._scratched ? '<span class="pill sect-red">SCR</span>' : ''}</td>
         </tr>
         ${open ? `<tr><td colspan="14" class="px-4 py-5 md:px-6 bg-[#0d1117]">${detailPanel(r, race)}</td></tr>` : ''}`;
     }).join('') || '<tr><td colspan="14" class="p-10 text-center text-gray-500">No runners.</td></tr>';

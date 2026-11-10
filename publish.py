@@ -52,7 +52,7 @@ PUB_TABLES = {
                  ("race_number", "INTEGER"), ("race_name", "TEXT"), ("distance", "INTEGER"),
                  ("class_name", "TEXT"), ("class_group", "TEXT"), ("form_par", "REAL"),
                  ("jump_time", "TEXT"), ("field_size", "INTEGER"), ("tempo", "TEXT"), ("lengths_per_point", "REAL"),
-                 ("model_version", "TEXT"), ("v2_mkt", "REAL"),
+                 ("model_version", "TEXT"), ("v2_mkt", "REAL"), ("v2_fades", "INTEGER"),
                  ("leaders", "INTEGER"), ("market_weight", "REAL"), ("commission", "REAL"),
                  ("betfair_market_id", "TEXT"), ("result_in", "INTEGER"), ("published_at", "TEXT")],
     },
@@ -281,7 +281,7 @@ def publish_card(db, card, model=None, published_at=None):
         # for every runner (the market is one of its inputs).
         v2 = getattr(model, "v2", None) if model is not None else None
         v2_static, v2_on = {}, False
-        if v2 and v2.get("validated") and all((e.get("market_odds") or 0) > 1 for e, _, _, _, _ in scored):
+        if v2 and (v2.get("use_for_pricing") or v2.get("validated")) and all((e.get("market_odds") or 0) > 1 for e, _, _, _, _ in scored):
             try:
                 import math
                 import model_v2
@@ -396,6 +396,7 @@ def publish_card(db, card, model=None, published_at=None):
             "market_weight": MARKET_WEIGHT, "commission": commission, "betfair_market_id": betfair,
             "result_in": result_in, "published_at": published_at,
             "model_version": "v2" if v2_on else "blend", "v2_mkt": v2["market_coef"] if v2_on else None,
+            "v2_fades": 1 if (v2_on and v2.get("fades_proven")) else 0,
         })
 
     for row in e_rows:
