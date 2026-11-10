@@ -530,7 +530,24 @@ def main(argv=None):
         print(report(base))
         print("=== With Form King ratings added ===")
         print(report(full, angles))
+        # Third model: trained AND tested only on races where we hold Form King
+        # form for the field. That is the population the site prices, and it keeps
+        # runners we know nothing about out of the fit, where they were being
+        # marked down simply for being unknown.
+        onlyfk = None
+        if not a.no_fk and "has_fk" in df:
+            share = df.groupby("market_id")["has_fk"].transform("mean")
+            dff = df[(share >= 0.8) & (df["date"] >= pd.Timestamp(FK_FROM))].copy()
+            races = dff["market_id"].nunique()
+            print("=== Form King cards only: {:,} races ===".format(races))
+            if races >= 3000:
+                onlyfk = evaluate(dff, NAMES, "v3-fk")
+                print(report(onlyfk))
+            else:
+                print("Not enough complete Form King cards to fit on their own yet.")
         best = full if full["gain_per_race"] >= base["gain_per_race"] else base
+        if onlyfk and onlyfk.get("use_for_pricing") and not best.get("use_for_pricing"):
+            best = onlyfk            # it earns the cards on the races it will price
         best["compared"] = {"market_form_gain": base["gain_per_race"], "with_ratings_gain": full["gain_per_race"]}
         if not a.no_save:
             model_v2.save(db, best, name="v3")
