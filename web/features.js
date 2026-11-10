@@ -671,8 +671,8 @@ async function loadRecord() {
   const { data: meets } = mids.length ? await sb.from('edge_meetings').select('meeting_id,track').in('meeting_id', mids) : { data: [] };
   const R = Object.fromEntries(races.map(r => [r.race_id, r])), M = Object.fromEntries((meets || []).map(m => [m.meeting_id, m]));
   const graded = (flags || []).filter(f => R[f.race_id] && R[f.race_id].result_in && f.finish_pos && f.market_price > 1)
-    .map(f => { const stake = 100 / (f.market_price - 1); const win = f.finish_pos === 1;
-      return { ...f, race: R[f.race_id], track: (M[R[f.race_id].meeting_id] || {}).track, stake, pl: win ? 100 : -stake, win,
+    .map(f => { const stake = Math.min(100 / (f.market_price - 1), 75); const win = f.finish_pos === 1;
+      return { ...f, race: R[f.race_id], track: (M[R[f.race_id].meeting_id] || {}).track, stake, pl: win ? stake * (f.market_price - 1) : -stake, win,
                clv: f.result_bsp ? f.market_price / f.result_bsp - 1 : null }; })
     .sort((a, b) => (b.race.meeting_date || '').localeCompare(a.race.meeting_date || '') || a.race.race_number - b.race.race_number);
   const pending = (flags || []).length - graded.length;
@@ -690,7 +690,7 @@ async function loadRecord() {
       ${tile('ROI', staked ? signed(pl / staked * 100, 1, '%') : '–', pl >= 0 ? 'text-emerald-400' : 'text-red-400')}
       ${tile('Avg CLV vs BSP', clvs.length ? signed(clvs.reduce((a, b) => a + b, 0) / clvs.length * 100, 1, '%') : '–', 'text-white', 'Our price against the Betfair starting price. Beating BSP over time is the best early sign of a real edge, long before profit is reliable.')}
     </div>
-    <p class="text-[11px] text-gray-500 mb-3">To-win-$100 staking at the price published before the race (stake = 100 ÷ (price − 1)). ${pending > 0 ? pending + ' flags are still waiting on results.' : ''} Flags are frozen once a race result arrives, so this can't be rewritten after the fact.</p>
+    <p class="text-[11px] text-gray-500 mb-3">To-win-$100 staking at the price published before the race (stake = 100 ÷ (price − 1), capped at $75). ${pending > 0 ? pending + ' flags are still waiting on results.' : ''} Flags are frozen once a race result arrives, so this can't be rewritten after the fact.</p>
     <div class="overflow-x-auto"><table class="w-full text-left font-mono-numbers text-xs">
       <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider"><tr>
         <th class="p-3">Date</th><th class="p-3 font-sans">Race</th><th class="p-3 font-sans">Horse</th><th class="p-3">Taken</th><th class="p-3">True</th><th class="p-3">BSP</th><th class="p-3">CLV</th><th class="p-3">Fin</th><th class="p-3">Stake</th><th class="p-3">P/L</th></tr></thead>
@@ -717,8 +717,8 @@ function renderReviewSummary() {
     if (book[0]) { topExp += book[0].p_blend; if (book[0].finish_pos === 1) topW++; }
     rows.forEach(r => {
       if (r.value_flag && r.market_price > 1 && r.finish_pos) {
-        const st = 100 / (r.market_price - 1); n++; staked += st;
-        if (r.finish_pos === 1) { wins++; pl += 100; } else pl -= st;
+        const st = Math.min(100 / (r.market_price - 1), 75); n++; staked += st;
+        if (r.finish_pos === 1) { wins++; pl += st * (r.market_price - 1); } else pl -= st;
       }
       if (r.finish_pos > 1 && r.result_rating && race.form_par && r.result_rating >= race.form_par) {
         follow.push({ race, r, why: `ran ${num(r.result_rating, 1)}, at or above the winning par ${num(race.form_par, 1)}` });
@@ -835,7 +835,7 @@ async function renderReviewAll() {
     if (spFav && spFav.finish_pos === 1) favWins++;
     if (top) { topExp += top.p_blend; if (top.finish_pos === 1) topWins++; }
     rows.forEach(r => {
-      if (r.value_flag && r.market_price > 1) { const st = 100 / (r.market_price - 1); vN++; vSt += st; if (r.finish_pos === 1) { vW++; vPl += 100; } else vPl -= st; }
+      if (r.value_flag && r.market_price > 1) { const st = Math.min(100 / (r.market_price - 1), 75); vN++; vSt += st; if (r.finish_pos === 1) { vW++; vPl += st * (r.market_price - 1); } else vPl -= st; }
       const rt = rated(race, r);
       if (rt) bestRuns.push({ race, r, rt, l: lengthsVsPar(rt, race) });
       const h = H[race.race_id + '|' + r.horse_name] || {};
@@ -915,3 +915,48 @@ async function renderReviewAll() {
     </div>`;
 }
 function ordinalTxt(n) { return !n ? '–' : n + (['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : (n % 10 < 4 ? n % 10 : 0)]); }
+
+
+// ---------------------------------------------------------------- through the preparation
+// Average / best rating at each stage of a preparation, from the full history
+// when loaded (falls back to the runs on the card).
+const PREP_HIST = {};
+function prepStageBlock(r, race) {
+  const id = 'prep_' + String(r.horse_name).replace(/[^a-z0-9]/gi, '_');
+  const full = PREP_HIST[r.horse_name];
+  if (!full) {
+    sb.rpc('edge_horse_runs', { p_name: r.horse_name }).then(({ data }) => {
+      PREP_HIST[r.horse_name] = (data && data.length) ? data.map(x => ({ prep: x.race_in_prep, rating: x.wfa_rating, pos: x.finish_pos }))
+        : parseJSON(r.last_runs, []).map(x => ({ prep: x.prep, rating: x.rating, pos: x.pos }));
+      const el = document.getElementById(id); if (el) el.outerHTML = prepStageBlock(r, race);
+    }).catch(() => {});
+  }
+  const runs = full || parseJSON(r.last_runs, []).map(x => ({ prep: x.prep, rating: x.rating, pos: x.pos }));
+  const stages = [1, 2, 3, 4, 5];
+  const st = {};
+  stages.forEach(k => st[k] = { n: 0, w: 0, p: 0, rs: [] });
+  runs.forEach(x => { if (!x.prep) return; const k = Math.min(x.prep, 5); const o = st[k]; o.n++; if (x.pos === 1) o.w++; if (x.pos && x.pos <= 3) o.p++; if (x.rating) o.rs.push(x.rating); });
+  const avg = k => st[k].rs.length ? st[k].rs.reduce((a, b) => a + b, 0) / st[k].rs.length : null;
+  const today = Math.min(r.prep_run || 0, 5);
+  const withAvg = stages.filter(k => avg(k) !== null && st[k].rs.length >= 1);
+  const peak = withAvg.length ? withAvg.reduce((a, b) => avg(b) > avg(a) ? b : a) : null;
+  const lbl = k => k === 5 ? '5th-up+' : STAGE_OF(k);
+  const cells = stages.map(k => {
+    const a = avg(k), l = a !== null ? lengthsVsPar(a, race) : null;
+    const tone = l === null ? 'text-gray-300' : l >= 0 ? 'text-emerald-400' : l >= -PAR_BAND ? 'text-amber-300' : 'text-red-400';
+    return `<div class="rounded-lg p-3 border ${k === today ? 'border-[#ff6600] bg-[#ff6600]/10' : 'border-[#1e2638] bg-[#0d1117]'}">
+      <div class="flex justify-between items-center"><span class="text-[10px] uppercase tracking-widest ${k === today ? 'text-[#ff6600] font-bold' : 'text-gray-500'}">${lbl(k)}${k === today ? ' · today' : ''}</span>${k === peak && withAvg.length > 1 ? '<span class="pill sect-green">PEAK</span>' : ''}</div>
+      <div class="text-xl font-black font-mono-numbers mt-1 ${tone}">${a === null ? '–' : a.toFixed(1)}</div>
+      <div class="text-[10px] text-gray-400 font-mono-numbers">${l === null ? '' : (l >= 0 ? '+' : '−') + Math.abs(l).toFixed(1) + 'L vs par · '}best ${st[k].rs.length ? Math.max(...st[k].rs).toFixed(1) : '–'}</div>
+      <div class="text-[10px] text-gray-500 font-mono-numbers">${st[k].n ? `${st[k].n} runs: ${st[k].w}-${st[k].p - st[k].w}` : 'no runs'}</div></div>`;
+  }).join('');
+  let read = '';
+  if (peak && today && withAvg.length > 1) {
+    const ta = avg(today), pa = avg(peak);
+    if (today === peak) read = `<span class="text-emerald-400 font-bold">Today is its peak stage.</span>`;
+    else if (ta !== null) { const l = (pa - ta) * lppFor(race && race.distance, race); read = `Peaks ${lbl(peak)}; today (${lbl(today)}) it averages ${l.toFixed(1)}L below that.`; }
+    else read = `Peaks ${lbl(peak)}; no runs yet at today's stage.`;
+  }
+  return `<div id="${id}"><div class="grid grid-cols-2 md:grid-cols-5 gap-2">${cells}</div>
+    <div class="text-[11px] text-gray-300 mt-2">${read} <span class="text-gray-500">${full ? `From ${runs.length} runs in the database.` : 'From the runs on the card; full history loading…'}</span></div></div>`;
+}

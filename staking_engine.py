@@ -11,6 +11,7 @@ so that a winning bet returns exactly TARGET_PROFIT in profit at the taken price
 
 # Target profit per winning bet, in dollars.
 TARGET_PROFIT = 100.0
+MAX_STAKE = 75.0          # syndicate rule: to win $100, never stake more than $75
 
 # MAO gating.
 DEFAULT_MIN_EDGE = 0.15
@@ -27,7 +28,7 @@ def target_profit_stake(market_odds, target=TARGET_PROFIT):
     b = market_odds - 1.0
     if b <= 0:
         return 0.0
-    return round(target / b, 2)
+    return round(min(target / b, MAX_STAKE), 2)
 
 
 def quarter_kelly_stake(model_prob, odds, bankroll=DEFAULT_BANKROLL):
@@ -51,7 +52,8 @@ def calculate_stake(market_odds, mode=STAKE_CONSUMER, model_prob=None,
         return {"dollars": dollars, "mode": STAKE_SYNDICATE, "bet": dollars > 0,
                 "to_win": round(dollars * (market_odds - 1.0), 2)}
     dollars = target_profit_stake(market_odds, target)
-    return {"dollars": dollars, "mode": STAKE_CONSUMER, "to_win": target, "bet": dollars > 0}
+    to_win = round(dollars * (market_odds - 1.0), 2) if market_odds and market_odds > 1 else 0.0
+    return {"dollars": dollars, "mode": STAKE_CONSUMER, "to_win": min(target, to_win), "bet": dollars > 0}
 
 
 def calculate_mao(fair_odds, min_edge=DEFAULT_MIN_EDGE):

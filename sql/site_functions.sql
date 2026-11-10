@@ -1,5 +1,20 @@
 CREATE TABLE IF NOT EXISTS edge.model_params (name TEXT PRIMARY KEY, fitted_at TEXT, params_json TEXT);
 
+-- Bet log. The site reads it with the public key; only the Netlify function
+-- (service key, PIN-protected) can add or void bets.
+CREATE TABLE IF NOT EXISTS public.edge_bets (
+  id TEXT PRIMARY KEY, created_at TEXT, bettor TEXT, meeting_date TEXT, track TEXT,
+  race_id TEXT, race_number INTEGER, horse_name TEXT, saddlecloth INTEGER,
+  odds_taken DOUBLE PRECISION, stake DOUBLE PRECISION, to_win DOUBLE PRECISION,
+  fair_price DOUBLE PRECISION, edge_pct DOUBLE PRECISION, bookmaker TEXT, note TEXT,
+  void INTEGER DEFAULT 0);
+ALTER TABLE public.edge_bets ENABLE ROW LEVEL SECURITY;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.edge_bets FROM anon, authenticated;
+GRANT SELECT ON public.edge_bets TO anon, authenticated;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'edge_bets'
+  AND policyname = 'site can read') THEN
+  CREATE POLICY "site can read" ON public.edge_bets FOR SELECT TO anon, authenticated USING (true); END IF; END $$;
+
 -- Read-only functions the website calls (Supabase RPC). SECURITY DEFINER so the
 -- anon key can read the edge history through them without table access.
 
