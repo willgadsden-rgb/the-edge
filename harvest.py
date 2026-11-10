@@ -488,8 +488,8 @@ def audit_window(db, date_from, date_to, cap, fix=True):
         for d, track in sorted(betfair_vic_meetings(date_from, date_to)):
             if (d, _slug(track)) in have_pub or (d, _slug(track)) in have_cand:
                 continue
-            mid = _meeting_id_for(db, track, d)
-            missing.append({"id": mid, "date": d, "track": track, "races": 0})
+            ids = _meeting_id_for(db, track, d)
+            missing.append({"id": ids[0], "ids": ids, "date": d, "track": track, "races": 0})
             have_cand.add((d, _slug(track)))
     except Exception as exc:
         print("  Betfair cross-check skipped: {}".format(str(exc)[:120]))
@@ -504,17 +504,31 @@ def audit_window(db, date_from, date_to, cap, fix=True):
     done = failed = 0
     cards = []
     for m in missing[:cap]:
+        card, used, last = None, None, None
+        for mid in m.get("ids") or [m["id"]]:
+            try:
+                card = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=mid))
+                used = mid
+                break
+            except Exception as exc:
+                last = str(exc)[:120]
+        if not card:
+            failed += 1
+            db.conn.rollback()
+            print("  COULD NOT PULL {} {}: tried {} - {}".format(
+                m["date"], m["track"], ", ".join(m.get("ids") or [m["id"]]), last), file=sys.stderr)
+            continue
         try:
-            card = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=m["id"]))
-            store_card(db, card, ref=m["id"], keep_raw=True, placings=False)
+            store_card(db, card, ref=used, keep_raw=True, placings=False)
             cards.append(card)
             done += 1
+            print("  pulled {} {} as {}".format(m["date"], m["track"], used))
             if len(cards) >= 8:
                 publish_all(db, cards); cards = []
         except Exception as exc:
             failed += 1
             db.conn.rollback()
-            print("  COULD NOT PULL {} {}: {}".format(m["date"], m["id"], str(exc)[:140]), file=sys.stderr)
+            print("  COULD NOT STORE {} {}: {}".format(m["date"], used, str(exc)[:140]), file=sys.stderr)
     if cards:
         publish_all(db, cards)
     print("Audit done: {} pulled, {} could not be pulled, about {} credits; {} left over the cap".format(
@@ -572,14 +586,29 @@ def betfair_vic_meetings(date_from, date_to):
 
 
 def _meeting_id_for(db, track, date_iso):
-    """Form King's id for a meeting: learn the track's prefix from any meeting of
-    the same track we already hold, else build it from the name."""
+    """Form King ids for a track on a date, best first.
+
+    Betfair calls it "Sandown"; Form King calls the card "Sandown Hillside" or
+    "Sandown Lakeside", and the same goes for Pakenham and Ballarat's synthetic
+    tracks. So learn every prefix we hold for a track whose name starts the same
+    way and try them all - a wrong id is a 404 and costs nothing.
+    """
     want = _slug(track)
+    day = date_iso.replace("-", "")
+    exact, close = [], []
     for mid, t in db.query("SELECT meeting_id, track FROM races WHERE meeting_id IS NOT NULL AND track IS NOT NULL "
                            "GROUP BY meeting_id, track"):
-        if _slug(t) == want and re.search(r"-\d{8}$", mid or ""):
-            return "{}-{}".format(mid[:-9], date_iso.replace("-", ""))
-    return "{}-{}".format(re.sub(r"[^a-z0-9]+", "-", str(track or "").lower()).strip("-"), date_iso.replace("-", ""))
+        if not re.search(r"-\d{8}$", mid or ""):
+            continue
+        slug = _slug(t)
+        prefix = "{}-{}".format(mid[:-9], day)
+        if slug == want and prefix not in exact:
+            exact.append(prefix)
+        elif (slug.startswith(want) or want.startswith(slug)) and prefix not in close:
+            close.append(prefix)
+    plain = "{}-{}".format(re.sub(r"[^a-z0-9]+", "-", str(track or "").lower()).strip("-"), day)
+    out = exact + close + ([plain] if plain not in exact + close else [])
+    return out[:6]
 
 
 def publish_all(db, cards):
@@ -623,6 +652,8 @@ def main(argv=None):
     ap.add_argument("--audit", nargs=2, metavar=("FROM", "TO"),
                     help="find every Victorian meeting in this range that the website is missing, and pull it")
     ap.add_argument("--audit-only", action="store_true", help="list the gaps without spending credits")
+    ap.add_argument("--pull", nargs="+", metavar="MEETING_ID",
+                    help="pull and publish these Form King meeting ids (5 credits each)")
     args = ap.parse_args(argv)
 
     import os
@@ -634,6 +665,22 @@ def main(argv=None):
     db = HistoryDB()
     db.ensure_schema()
     print("History database: {}".format(db.kind))
+
+    if args.pull:
+        session = fk._session()
+        cards = []
+        for mid in args.pull:
+            try:
+                card = fk._get(session, fk._SUMMARY_PATH.format(meeting_id=mid))
+                print(mid, store_card(db, card, ref=mid, keep_raw=True, placings=False))
+                cards.append(card)
+            except Exception as exc:
+                db.conn.rollback()
+                print("COULD NOT PULL {}: {}".format(mid, str(exc)[:160]), file=sys.stderr)
+        if cards:
+            publish_all(db, cards)
+        db.close()
+        return 0
 
     if args.audit:
         audit_window(db, args.audit[0], args.audit[1],

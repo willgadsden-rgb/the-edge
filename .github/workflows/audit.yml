@@ -18,6 +18,10 @@ on:
         description: "List the gaps without spending credits (true/false)"
         required: false
         default: "false"
+      pull:
+        description: "Optional: pull these meeting ids instead (space separated)"
+        required: false
+        default: ""
 concurrency:
   group: backfill
   cancel-in-progress: false
@@ -36,7 +40,9 @@ jobs:
           FORMKING_BASE_URL: ${{ secrets.FORMKING_BASE_URL }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          if [ "${{ inputs.list_only }}" = "true" ]; then
+          if [ -n "${{ inputs.pull }}" ]; then
+            python harvest.py --pull ${{ inputs.pull }}
+          elif [ "${{ inputs.list_only }}" = "true" ]; then
             python harvest.py --audit "${{ inputs.from }}" "${{ inputs.to }}" --audit-only
           else
             python harvest.py --audit "${{ inputs.from }}" "${{ inputs.to }}" --max "${{ inputs.max }}"
