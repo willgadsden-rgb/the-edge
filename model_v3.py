@@ -316,6 +316,11 @@ def evaluate(df, names=NAMES, label="v3"):
         "overlays_120_vic": vic[vic["bsp"].between(*ODDS_BAND) & (vic["p_f"] >= 1.2 * vic["p_m"])],
         "fades_120_vic": vic[vic["bsp"].between(*ODDS_BAND) & (vic["p_f"] <= vic["p_m"] / 1.2)],
     }
+    # Where the flags actually appear: runners we hold Form King form for. This is
+    # the population the site bets, so it is the one the proven flags are judged on.
+    fk = te[te["has_fk"] > 0] if "has_fk" in te else te.iloc[0:0]
+    sets["overlays_120_fk"] = fk[fk["bsp"].between(*ODDS_BAND) & (fk["p_f"] >= 1.2 * fk["p_m"])]
+    sets["fades_120_fk"] = fk[fk["bsp"].between(*ODDS_BAND) & (fk["p_f"] <= fk["p_m"] / 1.2)]
     perf = {k: _perf(v, "p_f") for k, v in sets.items()}
     ae = lambda mask: (lambda d: d.loc[mask(d), "win"].sum() / d.loc[mask(d), "p_m"].sum() if mask(d).sum() else np.nan)
     perf["overlays_120"]["ae_ci"] = _boot(te, ae(lambda d: d["bsp"].between(*ODDS_BAND) & (d["p_f"] >= 1.2 * d["p_m"])))
@@ -323,6 +328,11 @@ def evaluate(df, names=NAMES, label="v3"):
     roi = lambda mask: (lambda d: np.where(d.loc[mask(d), "win"] == 1, (d.loc[mask(d), "bsp"] - 1) * (1 - COMMISSION), -1.0).mean() * 100 if mask(d).sum() else np.nan)
     perf["overlays_120"]["roi_ci"] = _boot(te, roi(lambda d: d["bsp"].between(*ODDS_BAND) & (d["p_f"] >= 1.2 * d["p_m"])))
     perf["strong_25"]["roi_ci"] = _boot(te, roi(lambda d: (d["p_f"] >= 0.25) & (d["p_f"] >= d["p_m"])))
+    if len(fk):
+        inband = lambda d: d["bsp"].between(*ODDS_BAND) & (d["has_fk"] > 0)
+        perf["fades_120_fk"]["ae_ci"] = _boot(fk, ae(lambda d: inband(d) & (d["p_f"] <= d["p_m"] / 1.2)))
+        perf["overlays_120_fk"]["ae_ci"] = _boot(fk, ae(lambda d: inband(d) & (d["p_f"] >= 1.2 * d["p_m"])))
+        perf["overlays_120_fk"]["roi_ci"] = _boot(fk, roi(lambda d: inband(d) & (d["p_f"] >= 1.2 * d["p_m"])))
 
     bands = []
     for lo, hi in ((1, 2.2), (2.2, 4), (4, 7), (7, 12), (12, 18), (18, 40), (40, 1001)):
@@ -337,7 +347,9 @@ def evaluate(df, names=NAMES, label="v3"):
     Xa = np.column_stack([np.log(df["p_mkt"].values), ((df[names] - amu) / asd).values])
     w = fit_clogit(Xa, df["win"].values, df["market_id"].values)
     coefs = {n: float(w[i + 1] / asd[n]) for i, n in enumerate(names)}
-    o, f = perf["overlays_120"], perf["fades_120"]
+    # judge the flags on the Form King population when it is big enough to judge
+    o = perf["overlays_120_fk"] if perf.get("overlays_120_fk", {}).get("n", 0) >= 300 else perf["overlays_120"]
+    f = perf["fades_120_fk"] if perf.get("fades_120_fk", {}).get("n", 0) >= 300 else perf["fades_120"]
     return {
         "label": label, "fitted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "train_from": TRAIN_FROM, "split": SPLIT_DATE, "names": list(names),
@@ -475,7 +487,7 @@ def report(p, angles=None):
         "PRICES THE CARDS: {}   overlays proven: {}   fades proven: {}   (Form King features on {:.0%} of test rows)".format(
             p["use_for_pricing"], p["overlays_proven"], p["fades_proven"], p.get("has_fk_share_test", 0)),
         "Backing at Betfair SP after {:.0%} commission, unseen races:".format(COMMISSION)]
-    for k in ("favourite", "top_pick", "strong_25", "strong_25_vic", "overlays_110", "overlays_120", "overlays_120_vic", "fades_120", "fades_120_vic", "all_in_band"):
+    for k in ("favourite", "top_pick", "strong_25", "strong_25_vic", "overlays_110", "overlays_120", "overlays_120_fk", "overlays_120_vic", "fades_120", "fades_120_fk", "fades_120_vic", "all_in_band"):
         L.append("  {:<17} {}".format(k, P.get(k)))
     L.append("Betfair SP by price band (A/E vs raw 1/BSP):")
     for b in p["bands"]:
