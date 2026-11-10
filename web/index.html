@@ -55,6 +55,7 @@
       <button onclick="switchTab('results')" id="tab-results-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Meeting Review</button>
       <button onclick="switchTab('horses')" id="tab-horses-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Horse Search</button>
       <button onclick="switchTab('compare')" id="tab-compare-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Compare Horses</button>
+      <button onclick="switchTab('ask')" id="tab-ask-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Ask The Edge</button>
       <button onclick="switchTab('exotics')" id="tab-exotics-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Exotics &amp; Quaddy</button>
       <button onclick="switchTab('bets')" id="tab-bets-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Bet Log</button>
       <button onclick="switchTab('stars')" id="tab-stars-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Stars &amp; Blackbook <span id="starsBadge" class="hidden ml-1 px-1.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-mono-numbers"></span></button>
@@ -93,6 +94,7 @@
       <button onclick="switchTab('results')" id="mtab-results-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Review</button>
       <button onclick="switchTab('horses')" id="mtab-horses-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Horses</button>
       <button onclick="switchTab('compare')" id="mtab-compare-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Compare</button>
+      <button onclick="switchTab('ask')" id="mtab-ask-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Ask</button>
       <button onclick="switchTab('exotics')" id="mtab-exotics-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Exotics</button>
       <button onclick="switchTab('bets')" id="mtab-bets-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Bets</button>
       <button onclick="switchTab('stars')" id="mtab-stars-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Stars</button>
@@ -251,6 +253,15 @@
         </div>
       </section>
 
+      <!-- ASK -->
+      <section id="section-ask" class="hidden">
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl max-w-4xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-1">Ask The Edge</h2>
+          <p class="text-[11px] text-gray-500 mb-4">Our analyst, reading the same numbers you are: the book, the plays and fades, the map, the bias, the stars and the paper record for the meeting you have open.</p>
+          <div id="askBody"></div>
+        </div>
+      </section>
+
       <!-- EXOTICS -->
       <section id="section-exotics" class="hidden space-y-6">
         <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
@@ -292,6 +303,10 @@
           <h2 class="text-white font-black text-xl uppercase tracking-widest">How to read it</h2>
           <p><b class="text-white">Form L</b>: the horse's expected run today in lengths against the typical winner of this class at this level of track (metro, provincial, country). <b class="text-emerald-400">Green</b> 0 or better = good enough to win. <b class="text-amber-300">Yellow</b> = within 2 lengths under: around the mark, needs a little improvement or a soft race. <b class="text-red-400">Red</b> = more than 2 lengths under. So &minus;2.3L means it rates about 2&frac13; lengths behind a typical winner of today's race.</p>
           <p><b class="text-white">Next to the name</b>: its average rating over the last 5 rated runs (in brackets), the Pattern Lab angles (▲ market under-rates, ▼ over-rates), and today's track condition: <b class="text-emerald-400">✓</b> suited (wins 25%+ or places half the time there, or rates 2+ points better there), <b class="text-amber-300">~</b> fair, <b class="text-red-400">✗</b> poor (3+ runs there without a win and rarely placing), <b>?</b> never raced on it. Click the horse for its full dry / soft / heavy / synthetic record.</p>
+          <p><b class="text-white">Ask The Edge</b>: the analyst tab. It reads the same snapshot you are looking at — our book, the plays and fades, the map, the bias, the stars, the paper record — and answers questions about it: bet of the day, build me a quaddy, read this race, how are we actually going. It has no live market, no form guide and no knowledge of current promotions, and it will not promise a winner. It needs an Anthropic API key set in Netlify (ANTHROPIC_API_KEY) before it will answer.</p>
+          <p><b class="text-white">Exotics &amp; Quaddy</b>: build an exacta, trifecta or first four off our own prices, or a quaddy across any legs with a budget. It shows the lines, the cost, our chance of collecting and the dividend the pool must beat for the bet to be worth taking. Placings use the Harville rule, which slightly flatters short-priced horses in second and third.</p>
+          <p><b class="text-white">Alerts</b>: the bell in the toolbar. While the tab is open it watches prices and tells you when a play drifts out to our minimum price, when a value flag appears, and when a play or blackbook horse is being backed. Turn on auto prices as well, or there is nothing new to watch.</p>
+          <p><b class="text-white">Last start, read against the day</b>: the engine works out each past meeting's bias from its own winners (never on fewer than five) and marks a horse that beat it <b class="text-emerald-400">↑ beat the day</b> or one that got every favour <b class="text-red-400">↓ had it easy</b>. Each line in Last runs carries its own flags, including a horse that rated the best run in the race without winning.</p>
           <p><b class="text-white">★ Plays board</b> (top of Live Cards): the high-percentage shortlist. A runner is a play only when it passes every rule — our chance 25%+, the price at or above our own, top-2 form in the race with decent depth, maps in the first half of the field without a 3-wide or pocketed tag, not poor on today's going, and no fade angle. Beside it sit the <b>strong chances one rule short</b> (the missing rule is named) and the <b>fades</b>. Open any runner to see the rules ticked and crossed.</p>
           <p><b class="text-white">Stars &amp; Blackbook</b>: Rising Stars are lightly raced horses (8 starts or fewer) that ran a new peak or are climbing, within 1.5 lengths of a winning standard for their class. Tap ☆ on any horse to add it to the blackbook; when a starred or blackbooked horse turns up on a card we've loaded, a green button appears on the plays board and in the list.</p>
           <p><b class="text-white">Track Record</b>: every play, value flag, top pick and fade is written to a paper ledger before the race at the price we published and never changed. It grades them against the result and the Betfair SP — winners against expected, P&amp;L at $100-to-win staking, ROI at BSP after commission, and how often we beat the BSP. "Proven" means 500+ graded bets, more winners than expected, a positive return at BSP and beating the BSP more often than not. Until then it's a test, not a tip.</p>
@@ -334,6 +349,7 @@
 <script src="bets.js"></script>
 <script src="plays.js"></script>
 <script src="exotics.js"></script>
+<script src="ask.js"></script>
 <script>
   const SUPABASE_URL = "https://xquwxvxdoaolggvilqkv.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_Wo3V2pBXOVWXrsnjFxkAWg_o_ym_-NS";
@@ -799,7 +815,7 @@
 
   // ---------- tabs ----------
   function switchTab(tab) {
-    ['racing', 'results', 'horses', 'compare', 'exotics', 'bets', 'stars', 'lab', 'record', 'guide'].forEach(t => {
+    ['racing', 'results', 'horses', 'compare', 'ask', 'exotics', 'bets', 'stars', 'lab', 'record', 'guide'].forEach(t => {
       document.getElementById('section-' + t).classList.toggle('hidden', t !== tab);
       document.getElementById('tab-' + t + '-btn').classList.toggle('active', t === tab);
       document.getElementById('mtab-' + t + '-btn').classList.toggle('active', t === tab);
@@ -807,6 +823,7 @@
     if (tab === 'lab') loadLab();
     if (tab === 'stars') renderStars();
     if (tab === 'exotics') { renderExotics(); renderQuaddy(); }
+    if (tab === 'ask') askRender();
     if (tab === 'compare') renderCompare();
     if (tab === 'bets') loadBets();
     if (tab === 'record') loadRecord();
