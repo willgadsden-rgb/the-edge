@@ -1,0 +1,20 @@
+# Refit model v3 on Betfair's free full-field data (+ our Form King ratings).
+# No Form King credits. The next harvest picks the new weights up automatically.
+name: Fit model v3
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "53 17 * * 0"    # Monday 4:53am AEDT, after the v2 refit
+jobs:
+  fit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python model_v3.py --fit

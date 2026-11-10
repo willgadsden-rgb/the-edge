@@ -137,7 +137,7 @@ def build_dataset(h, model, since=TRAIN_FROM):
         f = runner_features(model, x.horse_name, race)
         f["mkt"] = math.log(1.0 / x.sp)
         f.update(win=float(x.finish_pos == 1), sp=float(x.sp), bsp=float(x.bsp) if pd.notna(x.bsp) else None,
-                 race_date=x.race_date, race_id=x.race_id, source=x.source)
+                 race_date=x.race_date, race_id=x.race_id, source=x.source, horse_name=x.horse_name)
         out.append(f)
     return pd.DataFrame(out)
 
