@@ -27,6 +27,7 @@ import triggers_engine
 from pricing_engine import calculate_blended_fair_prices, effective_odds, commission_for_state
 from rating_engine import calculate_0_to_100_score, calculate_projected_score
 from staking_engine import calculate_mao, calculate_stake, DEFAULT_MIN_EDGE
+import plays
 
 MARKET_WEIGHT = 0.70          # same default as the app's market anchoring
 OVERLAY_EDGE = 0.20           # value flag: edge >= 20% and price at/above the minimum
@@ -35,7 +36,12 @@ VALUE_ODDS = (2.20, 18.00)    # ...and inside the odds band the app bets (roughi
 FROZEN_AFTER_RESULT = ("projected", "signals", "p_model", "p_market", "p_blend", "fair_price",
                        "market_price", "best_price", "edge_pct", "mao", "value_flag", "stake",
                        "settle_rank", "map_zone", "map_lane", "map_tag", "form_gap_l", "ceiling_gap_l",
-                       "form_confidence", "form_runs", "v2_static")
+                       "form_confidence", "form_runs", "v2_static", "play_flag", "play_reasons",
+                       "fade_flag", "form_rank", "play_checks")
+
+# Set once, at the first pre-race publish, and never overwritten: the price and
+# our numbers as they stood that morning, so the record can be graded honestly.
+KEEP_FIRST = {"morning_price", "morning_fair", "morning_p", "morning_at"}
 
 SITE_FUNCTIONS = Path(__file__).resolve().parent / "sql" / "site_functions.sql"
 
@@ -73,7 +79,33 @@ PUB_TABLES = {
                  ("value_flag", "INTEGER"), ("stake", "REAL"), ("flucs", "TEXT"), ("last_runs", "TEXT"),
                  ("finish_pos", "INTEGER"), ("margin", "REAL"), ("result_bsp", "REAL"),
                  ("result_sp", "REAL"), ("result_rating", "REAL"), ("result_comment", "TEXT"),
-                 ("published_at", "TEXT"), ("scratched", "INTEGER"), ("going_form", "TEXT"), ("v2_static", "REAL")],
+                 ("published_at", "TEXT"), ("scratched", "INTEGER"), ("going_form", "TEXT"), ("v2_static", "REAL"),
+                 # rider / stable / trials / class (straight from the feed)
+                 ("jockey_win_pct", "REAL"), ("jockey_place_pct", "REAL"), ("jockey_rides", "INTEGER"),
+                 ("trainer_win_pct", "REAL"), ("tj_form", "TEXT"), ("tj_win_pct", "REAL"), ("jh_form", "TEXT"),
+                 ("jockey_track", "TEXT"), ("trainer_track", "TEXT"), ("first_starter", "INTEGER"),
+                 ("fk_exp", "REAL"), ("fk_peak", "REAL"), ("fk_neural", "REAL"), ("trials", "TEXT"),
+                 ("class_move", "TEXT"), ("class_move_pts", "REAL"), ("form_rank", "INTEGER"),
+                 # plays / fades and the locked morning numbers
+                 ("play_flag", "INTEGER"), ("play_reasons", "TEXT"), ("fade_flag", "INTEGER"), ("play_checks", "TEXT"),
+                 ("morning_price", "REAL"), ("morning_fair", "REAL"), ("morning_p", "REAL"), ("morning_at", "TEXT")],
+    },
+    # Paper-bet ledger: a row is written the first time a runner is flagged before
+    # its race and never changed. kind = play | value | fade | top.
+    "edge_paper_bets": {
+        "key": ["race_id", "horse_name", "kind"],
+        "cols": [("race_id", "TEXT"), ("horse_name", "TEXT"), ("kind", "TEXT"), ("meeting_date", "TEXT"),
+                 ("track", "TEXT"), ("race_number", "INTEGER"), ("saddlecloth", "INTEGER"), ("flagged_at", "TEXT"),
+                 ("price", "REAL"), ("fair_price", "REAL"), ("p", "REAL"), ("p_market", "REAL"),
+                 ("model_version", "TEXT"), ("reasons", "TEXT")],
+    },
+    "edge_stars": {
+        "key": ["horse_name"],
+        "cols": [("horse_name", "TEXT"), ("score", "REAL"), ("career_starts", "INTEGER"), ("wins", "INTEGER"),
+                 ("last_date", "TEXT"), ("last_track", "TEXT"), ("last_distance", "INTEGER"), ("last_class", "TEXT"),
+                 ("last_pos", "INTEGER"), ("last_rating", "REAL"), ("prev_best", "REAL"), ("vs_par_l", "REAL"),
+                 ("trend", "REAL"), ("next_wins", "INTEGER"), ("reasons", "TEXT"), ("ratings", "TEXT"),
+                 ("sire", "TEXT"), ("trainer", "TEXT"), ("foal_date", "TEXT"), ("updated_at", "TEXT")],
     },
 }
 
@@ -127,7 +159,7 @@ def ensure_pub_schema(db):
     db.commit()
 
 
-def _upsert(db, table, rows):
+def _upsert(db, table, rows, insert_only=False):
     """Replace each row by key (a publish is the latest snapshot), keeping the
     previous value of a column only when the new one is empty."""
     if not rows:
@@ -137,11 +169,13 @@ def _upsert(db, table, rows):
     keys = spec["key"]
     t = _tname(db, table)
     short = table
-    sets = ", ".join("{c} = COALESCE(excluded.{c}, {s}.{c})".format(c=c, s=short)
+    sets = ", ".join(("{c} = COALESCE({s}.{c}, excluded.{c})" if c in KEEP_FIRST else
+                      "{c} = COALESCE(excluded.{c}, {s}.{c})").format(c=c, s=short)
                      for c in cols if c not in keys)
     ph = "%s" if db.kind == "postgres" else "?"
-    sql = "INSERT INTO {t} AS {s} ({cols}) VALUES ({vals}) ON CONFLICT ({keys}) DO UPDATE SET {sets}".format(
-        t=t, s=short, cols=", ".join(cols), vals=", ".join([ph] * len(cols)), keys=", ".join(keys), sets=sets)
+    action = "NOTHING" if insert_only else "UPDATE SET " + sets
+    sql = "INSERT INTO {t} AS {s} ({cols}) VALUES ({vals}) ON CONFLICT ({keys}) DO {action}".format(
+        t=t, s=short, cols=", ".join(cols), vals=", ".join([ph] * len(cols)), keys=", ".join(keys), action=action)
     if db.kind == "sqlite":
         sql = sql.replace(" AS {} ".format(short), " ", 1)
     db.conn.cursor().executemany(sql, [tuple(r.get(c) for c in cols) for r in rows])
@@ -197,6 +231,9 @@ def _last_runs(runs):
             "pos": r.get("pos"), "field": r.get("nrun"), "margin": r.get("margin"),
             "rating": r.get("rating"), "prep": r.get("prep"), "sp": r.get("sp"), "bsp": r.get("bsp"),
             "settle": r.get("settle"), "jockey": r.get("jockey"), "comment": r.get("comment"),
+            "class": r.get("class"), "rname": r.get("rname"), "next_wins": r.get("next_wins"),
+            "next_runs": r.get("next_runs"), "pos800": r.get("pos800"), "pos400": r.get("pos400"),
+            "wt": r.get("wt"), "barrier": r.get("barrier"),
         })
     return out
 
@@ -216,7 +253,7 @@ def publish_card(db, card, model=None, published_at=None):
                "state": card.get("state"), "going": cond, "rail": meeting.get("rail_position"),
                "penetrometer": meeting.get("penetrometer"), "rainfall": meeting.get("rainfall"),
                "race_count": len(mapped["races"]), "published_at": published_at}]
-    r_rows, e_rows = [], []
+    r_rows, e_rows, paper = [], [], []
 
     for race in mapped["races"]:
         raw = raw_races.get(race["race_number"]) or {}
@@ -280,11 +317,17 @@ def publish_card(db, card, model=None, published_at=None):
         # once it has beaten the market on races it never saw. It needs a price
         # for every runner (the market is one of its inputs).
         v2 = getattr(model, "v2", None) if model is not None else None
-        v2_static, v2_on = {}, False
-        if v2 and (v2.get("use_for_pricing") or v2.get("validated")) and all((e.get("market_odds") or 0) > 1 for e, _, _, _, _ in scored):
+        v3 = getattr(model, "v3", None) if model is not None else None
+        v2_static, v2_on, mver = {}, False, "blend"
+        priced = all((e.get("market_odds") or 0) > 1 for e, _, _, _, _ in scored)
+        raw_restr = str(raw.get("restrictions") or "").upper()
+        for cand, label in ((v3, "v3"), (v2, "v2")):
+            if v2_on or not cand or not priced or not (cand.get("use_for_pricing") or cand.get("prices_fk_cards") or cand.get("validated")):
+                continue
             try:
                 import math
                 import model_v2
+                statics = {}
                 for e, _, _, _, _ in scored:
                     prof = e.get("fk_profile") or {}
                     f = model_v2.runner_features(model, e["horse_name"], {
@@ -292,9 +335,18 @@ def publish_card(db, card, model=None, published_at=None):
                         "track": track, "race_date": mdate, "barrier": e.get("barrier"),
                         "field_size": len(scored), "prep": e.get("prep_run_num"),
                         "days_since": prof.get("days_since_run")})
-                    v2_static[e["horse_name"]] = model_v2.static_logit(v2, f)
-                z = {n: v2_static[n] + v2["market_coef"] * math.log(1.0 / e["market_odds"])
-                     for n, e in ((e["horse_name"], e) for e, _, _, _, _ in scored)}
+                    if label == "v2":
+                        statics[e["horse_name"]] = model_v2.static_logit(cand, f)
+                    else:
+                        import model_v3
+                        c = _rec3((prof.get("form") or {}).get("career"))
+                        f.update(model_v3.live_bf_features(
+                            e.get("runs_all"), mdate, race["distance"], track, raw_restr.startswith("MDN"),
+                            {t.lower() for t in fk.VIC_TRACKS}, (c[0], c[1]) if c else None))
+                        f["has_fk"] = 1.0
+                        statics[e["horse_name"]] = model_v3.static_score(cand, f)
+                z = {e["horse_name"]: statics[e["horse_name"]] + cand["market_coef"] * math.log(1.0 / e["market_odds"])
+                     for e, _, _, _, _ in scored}
                 top = max(z.values())
                 wts = {n: math.exp(v - top) for n, v in z.items()}
                 tot = sum(wts.values())
@@ -305,10 +357,9 @@ def publish_card(db, card, model=None, published_at=None):
                     eff = effective_odds(e["market_odds"], commission)
                     book[n] = dict(book.get(n, {}), p_blended=p, my_price=fair,
                                    edge_pct=(eff / fair - 1.0) * 100.0)
-                v2_on = True
+                v2_static, v2_on, mver, v2 = statics, True, label, cand
             except Exception as exc:
-                print("Model v2 skipped for {}: {}".format(race_id, exc))
-                v2_static, v2_on = {}, False
+                print("Model {} skipped for {}: {}".format(label, race_id, exc))
 
         par = None
         if model is not None:
@@ -317,6 +368,13 @@ def publish_card(db, card, model=None, published_at=None):
             except Exception:
                 par = None
         result_in = 0
+        fms = {e["horse_name"]: (model.rate(e["horse_name"], race["distance"], cond, race["class_name"], track, mdate)
+                                 if model else {}) for e, _, _, _, _ in scored}
+        order = sorted((n for n, f in fms.items() if f.get("gap_l") is not None), key=lambda n: -fms[n]["gap_l"])
+        form_rank = {n: i + 1 for i, n in enumerate(order)}
+        top_name = max(book, key=lambda n: book[n].get("p_blended") or 0) if book else None
+        band_today = plays.going_band(cond)
+        fades_on = bool(v2_on and v2 and v2.get("fades_proven"))
         for e, base, proj, signals, tac in scored:
             name = e["horse_name"]
             b = book.get(name, {})
@@ -327,20 +385,64 @@ def publish_card(db, card, model=None, published_at=None):
             value = bool(edge is not None and edge >= OVERLAY_EDGE and mao and mkt and mkt >= mao
                          and VALUE_ODDS[0] <= mkt <= VALUE_ODDS[1])
             prof = e.get("fk_profile") or {}
-            fm = model.rate(name, race["distance"], cond, race["class_name"], track, mdate) if model else {}
+            fm = fms.get(name) or {}
             best = model.best_stage(name) if model else None
             res = _result_for(raw_entries.get(name) or {}, race_id, win_m)
             result_in = result_in or (1 if res else 0)
             odds = (raw_entries.get(name) or {}).get("odds") or {}
             prep = e.get("prep_run_num") or 1
+            lruns = _last_runs(e.get("runs_all"))
+            gform = {k: (prof.get("form") or {}).get(k) for k in
+                     ("good", "soft", "heavy", "synthetic", "dead", "slow", "fast", "todays_going")}
+            cmove = cpts = None
+            if model is not None and par and lruns and lruns[0].get("class"):
+                try:
+                    pl = model.par(lruns[0]["class"], lruns[0].get("track"))[2]
+                    cmove, cpts = plays.class_move(par["par"], pl["par"] if pl else None)
+                except Exception:
+                    pass
+            p_now, p_mkt = b.get("p_blended"), b.get("p_market")
+            fade = plays.is_fade(p_now, p_mkt, mkt, fades_on)
+            is_play, why, _miss = plays.play_check({
+                "p": p_now, "p_market": p_mkt, "price": mkt, "fair": fair, "map_zone": tac.get("zone"),
+                "map_tag": tac.get("tag"), "form_rank": form_rank.get(name), "form_conf": fm.get("confidence"),
+                "going": plays.going_verdict(gform, band_today), "tags": plays.last_start_tags(lruns, race["distance"]),
+                "fade": fade})
+            if not res and mkt and fair:
+                common = {"race_id": race_id, "horse_name": name, "meeting_date": mdate, "track": track,
+                          "race_number": race["race_number"], "saddlecloth": e.get("saddlecloth"),
+                          "flagged_at": published_at, "price": mkt, "fair_price": fair, "p": p_now,
+                          "p_market": p_mkt, "model_version": mver}
+                if is_play:
+                    paper.append(dict(common, kind="play", reasons="; ".join(why)))
+                if value:
+                    paper.append(dict(common, kind="value", reasons="edge {:.0f}%".format((edge or 0) * 100)))
+                if fade:
+                    paper.append(dict(common, kind="fade", reasons="model {:.0f}% vs market {:.0f}%".format(
+                        (p_now or 0) * 100, (p_mkt or 0) * 100)))
+                if name == top_name:
+                    paper.append(dict(common, kind="top", reasons="top of our book"))
             e_rows.append({
+                "jockey_win_pct": prof.get("jockey_12m_win_pct"), "jockey_place_pct": prof.get("jockey_12m_place_pct"),
+                "jockey_rides": prof.get("jockey_12m_rides"), "trainer_win_pct": prof.get("trainer_12m_win_pct"),
+                "tj_form": prof.get("trainer_jockey"), "tj_win_pct": prof.get("trainer_jockey_win_pct"),
+                "jh_form": prof.get("jockey_horse"), "jockey_track": prof.get("jockey_track"),
+                "trainer_track": prof.get("trainer_track"), "first_starter": int(bool(prof.get("first_starter"))),
+                "fk_exp": prof.get("fk_rating_exp"), "fk_peak": prof.get("fk_rating_peak"),
+                "fk_neural": prof.get("fk_rating_neural"),
+                "trials": json.dumps([dict(t, date=fk._date_str(t["date"]) if isinstance(t.get("date"), (int, float)) else t.get("date"))
+                                      for t in (e.get("trials") or [])]),
+                "class_move": cmove, "class_move_pts": cpts, "form_rank": form_rank.get(name),
+                "play_flag": int(is_play), "play_reasons": "; ".join(why) if is_play else None, "fade_flag": int(fade),
+                "play_checks": json.dumps({"ok": why, "miss": _miss}) if (p_now or 0) >= 0.20 else None,
+                "morning_price": None if res else mkt, "morning_fair": None if res else fair,
+                "morning_p": None if res else p_now, "morning_at": None if res else published_at,
                 "race_id": race_id, "horse_name": name, "saddlecloth": e.get("saddlecloth"),
                 "barrier": e["barrier"], "weight": e["weight"], "apprentice_claim": e.get("apprentice_claim"),
                 "jockey": prof.get("jockey"), "trainer": prof.get("trainer"), "age": prof.get("age"),
                 "sex": prof.get("sex"), "sire": prof.get("sire"),
                 "career": (prof.get("form") or {}).get("career"),
-                "going_form": json.dumps({k: (prof.get("form") or {}).get(k) for k in
-                                          ("good", "soft", "heavy", "synthetic", "dead", "slow", "fast", "todays_going")}),
+                "going_form": json.dumps(gform),
                 "prep_run": prep, "prep_stage": STAGES.get(prep, "5th-up+"), "best_stage": best,
                 "days_since_run": prof.get("days_since_run"), "distance_change": prof.get("distance_change"),
                 "gear_changes": prof.get("gear_changes"), "base_score": round(base, 1),
@@ -355,7 +457,7 @@ def publish_card(db, card, model=None, published_at=None):
                 "open_price": fk._as_float(odds.get("avgOpen")),
                 "edge_pct": round(edge * 100, 1) if edge is not None else None, "mao": mao,
                 "value_flag": int(value), "stake": calculate_stake(mkt)["dollars"] if (value and mkt) else None,
-                "flucs": json.dumps(e.get("flucs") or []), "last_runs": json.dumps(_last_runs(e.get("runs_all"))),
+                "flucs": json.dumps(e.get("flucs") or []), "last_runs": json.dumps(lruns),
                 "finish_pos": fk._as_int(res.get("finishPosition")) if res else None,
                 "margin": fk._as_float(res.get("margin")) if res else None,
                 "result_bsp": fk._as_float(res.get("bsp")) if res else None,
@@ -395,8 +497,8 @@ def publish_card(db, card, model=None, published_at=None):
             "field_size": len(scored), "tempo": tempo_tier, "leaders": n_leaders,
             "market_weight": MARKET_WEIGHT, "commission": commission, "betfair_market_id": betfair,
             "result_in": result_in, "published_at": published_at,
-            "model_version": "v2" if v2_on else "blend", "v2_mkt": v2["market_coef"] if v2_on else None,
-            "v2_fades": 1 if (v2_on and v2.get("fades_proven")) else 0,
+            "model_version": mver, "v2_mkt": v2["market_coef"] if v2_on else None,
+            "v2_fades": 1 if fades_on else 0,
         })
 
     for row in e_rows:
@@ -404,8 +506,33 @@ def publish_card(db, card, model=None, published_at=None):
     counts = {"edge_meetings": _upsert(db, "edge_meetings", m_rows),
               "edge_races": _upsert(db, "edge_races", r_rows),
               "edge_runners": _upsert(db, "edge_runners", e_rows)}
+    _upsert(db, "edge_paper_bets", paper, insert_only=True)
     db.commit()
     return counts
+
+
+def _rec3(text):
+    m = re.match(r"^(\d+):(\d+)-(\d+)-(\d+)", str(text or ""))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def publish_stars(db, model, today=None):
+    """Rebuild the Rising Stars list (public.edge_stars) from the history."""
+    import stars
+    try:
+        horses = {r[0]: {"sire": r[1], "trainer": r[2], "foal_date": r[3]}
+                  for r in db.query("SELECT horse_name, sire, trainer, foal_date FROM horses")}
+    except Exception:
+        db.conn.rollback()
+        horses = {}
+    rows = stars.find_stars(model, today, horses)
+    now = _now_iso()
+    for r in rows:
+        r["updated_at"] = now
+    db.conn.cursor().execute("DELETE FROM {}".format(_tname(db, "edge_stars")))
+    _upsert(db, "edge_stars", rows)
+    db.commit()
+    return len(rows)
 
 
 def load_model(db):
@@ -419,8 +546,9 @@ def load_model(db):
         try:
             import model_v2
             m.v2 = model_v2.load(db)
+            m.v3 = model_v2.load(db, "v3")
         except Exception:
-            m.v2 = None
+            m.v2 = m.v3 = None
         return m
     except Exception as exc:
         print("Form model unavailable: {}".format(re.sub(r":[^:@\s]+@", ":****@", str(exc))))

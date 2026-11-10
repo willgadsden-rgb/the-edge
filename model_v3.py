@@ -136,7 +136,7 @@ def load_betfair(first_year=FIRST_YEAR, today=None):
     df["placed"] = (df["placed"].astype(str).str.upper() == "WINNER").astype(float)
     for c in ("bsp", "pp_max", "pp_min", "pp_wap", "pp_vol", "distance"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df[df["date"].notna() & (df["bsp"] > 1.0)].copy()
+    df = df[df["date"].notna() & (df["bsp"] > 1.0) & (df["bsp"] <= 1000.0) & np.isfinite(df["bsp"])].copy()
     df["hkey"] = df["horse"].map(hkey)
     df = df.drop_duplicates(["market_id", "hkey"])
     g = df.groupby("market_id")
@@ -144,6 +144,11 @@ def load_betfair(first_year=FIRST_YEAR, today=None):
     df["winners"] = g["win"].transform("sum")
     df = df[(df["n"] >= 4) & (df["winners"] == 1)].copy()          # complete, single-winner races
     df["p_mkt"] = (1 / df["bsp"]) / df.groupby("market_id")["bsp"].transform(lambda s: (1 / s).sum())
+    bad = df.groupby("market_id")["p_mkt"].transform(lambda s: (~np.isfinite(s)) .any() or (s <= 0).any())
+    if bad.any():
+        print("  dropped {:,} runners in {:,} races with an unusable BSP".format(
+            int(bad.sum()), int(df.loc[bad, "market_id"].nunique())), file=sys.stderr)
+        df = df[~bad].copy()
     return df.sort_values(["date", "time", "market_id"]).reset_index(drop=True)
 
 
@@ -287,8 +292,16 @@ def evaluate(df, names=NAMES, label="v3"):
     y = te["win"].values
     ll_raw, ll_m, ll_f = race_ll(te["p_mkt"].values, y, starts), race_ll(te["p_m"].values, y, starts), race_ll(te["p_f"].values, y, starts)
     te["race_gain"] = (ll_m - ll_f)[race] / te["n"].values          # spread so day-resampling sums back to per-race
-    gain = float((ll_m - ll_f).mean())
+    gain = float(np.nanmean(ll_m - ll_f))
     ci = _boot(te, lambda d: d["race_gain"].sum() / d["market_id"].nunique())
+    # Where it actually prices: races we hold Form King form for (our VIC cards).
+    gain_fk = gain_fk_ci = None; n_fk_races = 0
+    if "has_fk" in te:
+        sub = te[te.groupby("market_id")["has_fk"].transform("mean") >= 0.8]
+        if len(sub):
+            n_fk_races = int(sub["market_id"].nunique())
+            gain_fk = round(float(sub["race_gain"].sum() / n_fk_races), 5)
+            gain_fk_ci = _boot(sub, lambda d: d["race_gain"].sum() / d["market_id"].nunique())
     vic = te[te["state"] == "VIC"]
     band = te["bsp"].between(*ODDS_BAND)
     sets = {
@@ -330,11 +343,13 @@ def evaluate(df, names=NAMES, label="v3"):
         "train_from": TRAIN_FROM, "split": SPLIT_DATE, "names": list(names),
         "n_train_races": int(tr["market_id"].nunique()), "n_test_races": int(te["market_id"].nunique()),
         "n_test_runs": int(len(te)), "n_all_runs": int(len(df)),
-        "ll_market_raw": round(float(ll_raw.mean()), 5), "ll_market": round(float(ll_m.mean()), 5),
-        "ll_model": round(float(ll_f.mean()), 5), "gain_per_race": round(gain, 5), "gain_ci": ci,
-        "gain_pct": round(gain / float(ll_m.mean()) * 100, 3),
-        "gain_vic": round(float((ll_m - ll_f)[np.unique(race[(te["state"] == "VIC").values])].mean()), 5) if len(vic) else None,
+        "ll_market_raw": round(float(np.nanmean(ll_raw)), 5), "ll_market": round(float(np.nanmean(ll_m)), 5),
+        "ll_model": round(float(np.nanmean(ll_f)), 5), "gain_per_race": round(gain, 5), "gain_ci": ci,
+        "gain_pct": round(gain / float(np.nanmean(ll_m)) * 100, 3),
+        "gain_vic": round(float(np.nanmean((ll_m - ll_f)[np.unique(race[(te["state"] == "VIC").values])])), 5) if len(vic) else None,
         "perf": perf, "bands": bands,
+        "gain_fk": gain_fk, "gain_fk_ci": gain_fk_ci, "n_test_races_fk": n_fk_races,
+        "prices_fk_cards": bool(gain_fk_ci and gain_fk_ci[0] is not None and gain_fk_ci[0] > 0),
         "market_coef": float(w[0]), "market_only_coef": float(w_m[0]),
         "coefs": coefs, "means": {n: float(amu[n]) for n in names},
         "importance_per_sd": {n: round(float(w[i + 1]), 4) for i, n in enumerate(names)},
@@ -455,6 +470,8 @@ def report(p, angles=None):
         p["label"], p["n_train_races"], p["n_test_races"], p["n_test_runs"], p["split"]),
         "Log-loss per race: Betfair SP as-is {:.5f} | market (best fit) {:.5f} | model {:.5f}".format(p["ll_market_raw"], p["ll_market"], p["ll_model"]),
         "Gain over the market per race: {:+.5f} ({:+.3f}%)  95% CI {}   VIC only {}".format(p["gain_per_race"], p["gain_pct"], p["gain_ci"], p["gain_vic"]),
+        "On races we hold Form King form for: {:,} races, gain {} 95% CI {}  PRICES FK CARDS: {}".format(
+            p.get("n_test_races_fk") or 0, p.get("gain_fk"), p.get("gain_fk_ci"), p.get("prices_fk_cards")),
         "PRICES THE CARDS: {}   overlays proven: {}   fades proven: {}   (Form King features on {:.0%} of test rows)".format(
             p["use_for_pricing"], p["overlays_proven"], p["fades_proven"], p.get("has_fk_share_test", 0)),
         "Backing at Betfair SP after {:.0%} commission, unseen races:".format(COMMISSION)]

@@ -15,6 +15,7 @@ name: Harvest Form King
 on:
   schedule:
     - cron: "17 22 * * *"   # 9:17am AEDT / 8:17am AEST
+    - cron: "7 1 * * *"     # 12:07pm AEDT: prices and scratchings before most first races
     - cron: "37 12 * * *"   # 11:37pm AEDT / 10:37pm AEST
     - cron: "47 14 * * *"   # 1:47am AEDT: results catch-up only (GitHub sometimes skips a scheduled run)
   workflow_dispatch:         # "Run workflow" button, or the website's Sync button

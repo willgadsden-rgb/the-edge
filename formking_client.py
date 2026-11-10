@@ -245,9 +245,30 @@ def _last5(entry, limit=5):
             "dsp":       _as_int(ev.get("daysSincePreviousRace")),
             "next_wins": _as_int(((ev.get("subsequentForm") or {}).get("ALL") or {}).get("wins")),
             "next_runs": _as_int(((ev.get("subsequentForm") or {}).get("ALL") or {}).get("races")),
+            "rname":     ev.get("raceName"),
+            "time_ms":   _as_int(ev.get("timeInMillis")),
+            "fstr":      _as_float(ev.get("fieldStrength")),
         })
     runs.sort(key=lambda r: r["date"] or 0, reverse=True)
     return runs[:limit]
+
+
+def _trials(entry, limit=6):
+    """Recent jump-outs and official trials for a runner, newest first (real
+    Form King data: date, track, trip, going, finish, field, margin, time)."""
+    out = []
+    for ev in (entry.get("recentTrials") or []):
+        if not ev.get("date"):
+            continue
+        out.append({
+            "id": ev.get("raceId"), "date": ev.get("date"), "track": ev.get("track"),
+            "dist": _as_int(ev.get("distance")), "going": ev.get("going"),
+            "pos": _as_int(ev.get("finishPosition")) or None, "nrun": _as_int(ev.get("numRunners")) or None,
+            "margin": _as_float(ev.get("margin")), "time_ms": _as_int(ev.get("timeInMillis")) or None,
+            "name": ev.get("raceName"), "jockey": ev.get("jockey"),
+        })
+    out.sort(key=lambda r: r["date"] or 0, reverse=True)
+    return out[:limit]
 
 
 def _jump_time(race):
@@ -303,6 +324,14 @@ def _profile(entry):
         "trainer_jockey": tf.get("jockeyComboForm"),
         "trainer_jockey_win_pct": _as_float(tf.get("jockeyComboWinPercentage")),
         "fk_rating_exp": _as_float(rt.get("exp")), "fk_rating_peak": _as_float(rt.get("peak")),
+        "fk_rating_peak12m": _as_float(rt.get("peak12m")), "fk_rating_neural": _as_float(rt.get("neural")),
+        # Rider / stable detail straight from the feed.
+        "jockey_12m_place_pct": _as_float(jf.get("lastTwelveMonthPlacePercentage")),
+        "jockey_12m_rides": _as_int(jf.get("lastTwelveMonthRides")),
+        "jockey_track": jf.get("trackComboForm"), "trainer_track": tf.get("trackComboForm"),
+        "first_starter": bool(entry.get("firstStarter")),
+        "class_form": form.get("classForm"),
+        "benchmark": _as_float(entry.get("benchmarkRating")),
     }
 
 
@@ -341,6 +370,7 @@ def _map_entry(entry):
         # v2: every past run Form King returns (up to 12) and the runner's real
         # profile, so no part of the card has to be invented.
         "runs_all":         _last5(entry, limit=12),
+        "trials":           _trials(entry),
         "fk_profile":       _profile(entry),
     }
 

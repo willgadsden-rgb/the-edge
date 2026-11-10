@@ -148,7 +148,7 @@ def is_excuse(comment):
 HISTORY_SQL = """
 SELECT x.race_id, x.horse_name, x.finish_pos, x.margin, x.field_size, x.barrier, x.weight,
        x.jockey, x.settle_pos, x.sp, x.bsp, x.wfa_rating, x.race_in_prep, x.days_since_prev,
-       x.stewards_comment, x.next_runs, x.next_wins, x.source,
+       x.stewards_comment, x.next_runs, x.next_wins, x.source, x.race_in_career,
        r.race_date, r.track, r.state, r.distance, r.going, r.restrictions, r.race_name,
        r.field_size AS race_field_size
 FROM runs x JOIN races r ON r.race_id = x.race_id
@@ -160,7 +160,7 @@ def load_history(db):
     rows = db.query(HISTORY_SQL)
     cols = ["race_id", "horse_name", "finish_pos", "margin", "field_size", "barrier", "weight",
             "jockey", "settle_pos", "sp", "bsp", "wfa_rating", "race_in_prep", "days_since_prev",
-            "stewards_comment", "next_runs", "next_wins", "source", "race_date", "track", "state",
+            "stewards_comment", "next_runs", "next_wins", "source", "race_in_career", "race_date", "track", "state",
             "distance", "going", "restrictions", "race_name", "race_field_size"]
     df = pd.DataFrame([tuple(r) for r in rows], columns=cols)
     return prepare(df)

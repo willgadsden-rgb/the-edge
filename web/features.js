@@ -357,58 +357,6 @@ function modBadge(r) {
   return ` <span class="${t >= 0 ? 'text-emerald-400' : 'text-red-400'}" title="${esc(tip)}">${t >= 0 ? '+' : ''}${num(t, 1)}</span>`;
 }
 
-// ---------------------------------------------------------------- plays board
-function renderPlays() {
-  const box = document.getElementById('playsBoard'); if (!box) return;
-  const best = [], over = [];
-  S.races.forEach(race => {
-    if (race.result_in) return;
-    const rows = (S.runners[race.race_id] || []).filter(r => !r._scratched);
-    const book = byBook(rows);
-    rows.forEach(r => {
-      const ang = anglesFor(r, race);
-      const backs = ang.filter(a => a.side === 'back'), fades = ang.filter(a => a.side === 'fade');
-      const top = book[0] === r;
-      const goodMap = ['Leader', "Leader's Back / Box Seat", 'Handy'].includes(r.map_zone) && r.map_tag !== '3WNC';
-      const reasons = [];
-      if (r._value) reasons.push(`<span class="text-emerald-400 font-bold">value ${signed(r._edge * 100, 0, '%')}</span>`);
-      if (top) reasons.push('top of our book');
-      if (r.form_gap_l !== null && r.form_gap_l >= 0) reasons.push(`form ${signed(r.form_gap_l, 1, 'L')}`);
-      if (goodMap) reasons.push(`maps ${esc(zoneShort(r.map_zone).toLowerCase())}`);
-      if (r.best_stage && r.best_stage === r.prep_stage) reasons.push('best stage ★');
-      if (r._value || (backs.length && !fades.length && ((r._edge ?? -1) >= 0.10 || (top && (r._edge ?? -1) > 0)))) {
-        best.push({ race, r, ang, reasons, score: (r._value ? 100 : 0) + (r._edge || 0) * 100 + backs.length * 5 - fades.length * 8 });
-      }
-      if (r._fade || (!race._v2 && r._market && r._fair && (r._edge ?? 0) <= -0.15 && fades.length > backs.length && r._market <= 6)) {
-        over.push({ race, r, ang });
-      }
-    });
-  });
-  best.sort((a, b) => b.score - a.score);
-  over.sort((a, b) => (a.r._edge || 0) - (b.r._edge || 0));
-  const row = (x, cls) => `
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 border-t border-[#1e2638] cursor-pointer hover:bg-white/[.02]" onclick="selectView('${x.race.race_id}')">
-      <span class="text-[#ff6600] font-black w-8">R${x.race.race_number}</span>
-      <span class="text-white font-bold min-w-[140px]">${x.r.saddlecloth ?? ''}. ${esc(x.r.horse_name)}</span>
-      <span class="font-mono-numbers text-xs"><span class="text-[#ffa366]">${money(x.r._fair)}</span> vs <span class="text-white">${money(x.r._market)}</span></span>
-      <span class="text-[11px] text-gray-400">${(x.reasons || []).join(' · ')}</span>
-      <span>${x.ang.map(a => `<span class="pill ${a.side === 'back' ? 'sect-green' : 'sect-red'} mr-1" title="${esc(angleTip(a))}">${a.side === 'back' ? '▲' : '▼'} ${esc(a.short)}</span>`).join('')}</span>
-    </div>`;
-  box.innerHTML = `
-    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-      <div class="bg-[#11151d] p-5 rounded-xl border border-emerald-500/30">
-        <h3 class="text-white font-black text-lg">Best plays</h3>
-        <p class="text-[11px] text-gray-500 mb-2">Value flags first, then runners with a ▲ angle, no ▼, and either 10%+ edge or top of our book with an edge.</p>
-        ${best.slice(0, 8).map(x => row(x)).join('') || '<div class="text-gray-500 text-sm py-2">Nothing qualifies yet. Refresh prices closer to the jump; edges move.</div>'}
-      </div>
-      <div class="bg-[#11151d] p-5 rounded-xl border border-red-500/30">
-        <h3 class="text-white font-black text-lg">Overbet: think twice</h3>
-        <p class="text-[11px] text-gray-500 mb-2">With model v2 on, these are its fades: rated 20%+ below the market's own chance (on unseen races they won about a fifth less often than their price said). Otherwise: $6 or shorter, 15%+ under our price, and more ▼ angles than ▲. The market historically over-rates these. Lay candidates, or just leave them alone.</p>
-        ${over.slice(0, 8).map(x => row(x)).join('') || '<div class="text-gray-500 text-sm py-2">No overbet runners on this card.</div>'}
-      </div>
-    </div>`;
-}
-
 // ---------------------------------------------------------------- horse page
 const STAGE_OF = p => !p ? '–' : p >= 5 ? '5th-up+' : ['', '1st-up', '2nd-up', '3rd-up', '4th-up'][p];
 const GOING_OF = g => { const w = String(g || '').split(' ')[0].toLowerCase(); return ['firm', 'good', 'dead'].includes(w) ? 'Good' : ['soft', 'slow'].includes(w) ? 'Soft' : w === 'heavy' ? 'Heavy' : w.startsWith('synth') ? 'Synthetic' : (w ? w[0].toUpperCase() + w.slice(1) : '–'); };
@@ -521,6 +469,7 @@ function renderHorse(name, runs, ctx, source) {
         <h2 class="text-white font-black text-2xl">${esc(name)}</h2>
         <div class="text-[11px] text-gray-400">${facts}</div>
         <div class="text-xs text-gray-300 mt-1 font-mono-numbers">${runs.length} runs on file · ${w} wins · ${p - w} placings · ${runs.length ? Math.round(w / runs.length * 100) : 0}% win · ${runs.length ? Math.round(p / runs.length * 100) : 0}% place</div>
+        <div class="mt-2">${typeof bbButton === 'function' ? bbButton(name) : ''}</div>
       </div>
       <button onclick="closeHorse()" class="text-gray-400 hover:text-white text-2xl font-bold px-2" title="Close">×</button>
     </div>
@@ -577,19 +526,6 @@ async function horseSearch(q) {
     '<div class="text-gray-500 text-sm">No horse found.</div>';
 }
 
-// ---------------------------------------------------------------- pattern lab
-async function loadLab() {
-  const box = document.getElementById('labBody');
-  box.innerHTML = '<div class="p-6 text-gray-400 text-sm">Running the study on the history database…</div>';
-  let rows = null;
-  try { const { data, error } = await sb.rpc('edge_angle_stats'); if (error) throw error; rows = data; } catch (e) { rows = null; }
-  if (rows && rows.length) {
-    LAB_ROWS = rows;
-    const base = rows.find(x => x.side === '');
-    rows.forEach(x => { const i = ANGLE_INFO[x.angle]; if (i && base && base.ae_old && base.ae_recent && x.ae_old && x.ae_recent) { i.old = x.ae_old / base.ae_old; i.recent = x.ae_recent / base.ae_recent; } });
-  }
-  renderLab(rows);
-}
 async function modelCard() {
   let p = null;
   try { const { data, error } = await sb.rpc('edge_model_report', { p_name: 'v2' }); if (!error && data && data[0]) p = JSON.parse(data[0].params_json); } catch (e) {}
@@ -621,87 +557,6 @@ async function modelCard() {
         <div class="flex-1 h-2 bg-[#0d1117] rounded relative"><div class="absolute top-0 h-2 rounded ${v >= 0 ? 'bg-emerald-500 left-1/2' : 'bg-red-500 right-1/2'}" style="width:${Math.abs(v) / mx * 50}%"></div></div>
         <span class="w-12 text-right font-mono-numbers ${v >= 0 ? 'text-emerald-400' : 'text-red-400'}">${v >= 0 ? '+' : ''}${v.toFixed(2)}</span></div>`).join('')}</div>
     <p class="text-[10px] text-gray-500 mt-2">Trained on runs before ${esc(p.split)}, tested on the ${Number(p.n_test).toLocaleString()} runs after. It prices the cards once it is more accurate than the market on that unseen data (lower log-loss on 2,000+ runs). Overlays count as proven when they win 3%+ more than their price says on 100+ bets; fades when they win 10%+ less on 200+. Market weight ${Number(p.market_coef).toFixed(2)} (1.00 = takes the price at face value). Refits every Monday.</p>`;
-}
-
-function renderLab(rows) {
-  const box = document.getElementById('labBody');
-  const live = !!(rows && rows.length);
-  const base = live ? rows.find(x => x.side === '') : null;
-  const list = Object.entries(ANGLE_INFO).map(([name, i]) => {
-    const lr = live ? rows.find(x => x.angle === name) : null;
-    return { name, i, n: lr ? (Number(lr.n_old) + Number(lr.n_recent)) : null, strike: lr ? lr.strike : null, roi: lr ? lr.roi_sp : null };
-  });
-  if (live) rows.filter(x => !ANGLE_INFO[x.angle] && x.side !== '').forEach(x => list.push({ name: x.angle, i: { side: x.side, old: base && x.ae_old ? x.ae_old / base.ae_old : null, recent: base && x.ae_recent ? x.ae_recent / base.ae_recent : null }, n: Number(x.n_old) + Number(x.n_recent), strike: x.strike, roi: x.roi_sp }));
-  const pct = v => v === null || v === undefined ? '–' : (v >= 1 ? '+' : '') + Math.round((v - 1) * 100) + '%';
-  const verdict = i => (i.old >= 1.03 && i.recent >= 1.03) ? '<span class="pill sect-green">PROVEN: market under-rates</span>'
-    : (i.old <= 0.97 && i.recent <= 0.97) ? '<span class="pill sect-red">PROVEN: market over-rates</span>' : '<span class="pill sect-yellow">NOT PROVEN</span>';
-  setTimeout(modelCard, 0);
-  box.innerHTML = `
-    <div id="modelCard" class="bg-[#0d1117]/60 border border-[#1e2638] rounded-xl p-4 mb-5"><div class="text-sm text-gray-400">Loading the model…</div></div>
-    <p class="text-sm text-gray-300 mb-3">Each angle compares <b class="text-white">actual winners</b> with the winners the starting price expected (A/E), against the average runner. An angle counts only when it holds up in <b class="text-white">both</b> the older and the recent half of the history. That's how a syndicate avoids betting on luck.</p>
-    <div class="overflow-x-auto"><table class="w-full text-left font-mono-numbers text-xs">
-      <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider"><tr>
-        <th class="p-3 font-sans">Angle</th><th class="p-3">Older history</th><th class="p-3">Recent</th><th class="p-3">Runs</th><th class="p-3">Strike</th><th class="p-3" title="Level-stakes return at SP, before survivorship correction">ROI at SP</th><th class="p-3">Verdict</th></tr></thead>
-      <tbody class="divide-y divide-[#1e2638]">${list.map(x => `
-        <tr><td class="p-3 font-sans text-white font-bold">${esc(x.name)}</td>
-          <td class="p-3 ${x.i.old >= 1 ? 'text-emerald-400' : 'text-red-400'}">${pct(x.i.old)}</td>
-          <td class="p-3 ${x.i.recent >= 1 ? 'text-emerald-400' : 'text-red-400'}">${pct(x.i.recent)}</td>
-          <td class="p-3">${x.n ?? '–'}</td><td class="p-3">${x.strike === null || x.strike === undefined ? '–' : x.strike + '%'}</td>
-          <td class="p-3 text-gray-400">${x.roi === null || x.roi === undefined ? '–' : x.roi + '%'}</td><td class="p-3">${verdict(x.i)}</td></tr>`).join('')}</tbody>
-    </table></div>
-    <div class="text-[11px] text-gray-500 mt-3 space-y-1">
-      <p>${live ? `Live from the database: ${base ? (Number(base.n_old) + Number(base.n_recent)).toLocaleString() : ''} runs, split at 1 May 2026.` : 'Live study not available yet (it switches on after the next engine run). Showing the study from 9 Nov 2026: 37,743 runs.'}</p>
-      <p>The history only holds horses that are still racing, which flatters every raw ROI. That's why the verdict uses each angle's ratio to the average runner, not the ROI column. ▲ and ▼ tags on the cards come from this table.</p>
-    </div>`;
-}
-
-// ---------------------------------------------------------------- track record
-async function loadRecord() {
-  const box = document.getElementById('recordBody');
-  box.innerHTML = '<div class="p-6 text-gray-400 text-sm">Grading every flag…</div>';
-  const { data: flags, error } = await sb.from('edge_runners').select('race_id,horse_name,saddlecloth,market_price,fair_price,edge_pct,finish_pos,result_bsp,result_sp,stake').eq('value_flag', 1).limit(2000);
-  if (error) { box.innerHTML = `<div class="p-6 text-red-400 text-sm">Could not read the database: ${esc(error.message)}</div>`; return; }
-  const ids = [...new Set((flags || []).map(f => f.race_id))];
-  let races = [];
-  for (let i = 0; i < ids.length; i += 150) {
-    const { data } = await sb.from('edge_races').select('race_id,meeting_id,meeting_date,race_number,distance,class_name,result_in').in('race_id', ids.slice(i, i + 150));
-    races = races.concat(data || []);
-  }
-  const mids = [...new Set(races.map(r => r.meeting_id))];
-  const { data: meets } = mids.length ? await sb.from('edge_meetings').select('meeting_id,track').in('meeting_id', mids) : { data: [] };
-  const R = Object.fromEntries(races.map(r => [r.race_id, r])), M = Object.fromEntries((meets || []).map(m => [m.meeting_id, m]));
-  const graded = (flags || []).filter(f => R[f.race_id] && R[f.race_id].result_in && f.finish_pos && f.market_price > 1)
-    .map(f => { const stake = Math.min(100 / (f.market_price - 1), 75); const win = f.finish_pos === 1;
-      return { ...f, race: R[f.race_id], track: (M[R[f.race_id].meeting_id] || {}).track, stake, pl: win ? stake * (f.market_price - 1) : -stake, win,
-               clv: f.result_bsp ? f.market_price / f.result_bsp - 1 : null }; })
-    .sort((a, b) => (b.race.meeting_date || '').localeCompare(a.race.meeting_date || '') || a.race.race_number - b.race.race_number);
-  const pending = (flags || []).length - graded.length;
-  const n = graded.length, wins = graded.filter(g => g.win).length;
-  const staked = graded.reduce((s, g) => s + g.stake, 0), pl = graded.reduce((s, g) => s + g.pl, 0);
-  const clvs = graded.map(g => g.clv).filter(v => v !== null);
-  const expW = graded.reduce((s, g) => s + (g.fair_price ? 1 / g.fair_price : 0), 0);
-  const tile = (label, val, tone = 'text-white', tip = '') => `<div class="bg-[#0d1117] border border-[#1e2638] rounded-lg p-3" title="${esc(tip)}"><div class="text-[10px] text-gray-500 uppercase tracking-widest">${label}</div><div class="text-xl font-black font-mono-numbers ${tone}">${val}</div></div>`;
-  box.innerHTML = `
-    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">
-      ${tile('Bets graded', n)}${tile('Winners', `${wins} (${n ? Math.round(wins / n * 100) : 0}%)`)}
-      ${tile('Expected winners', num(expW, 1), 'text-[#ffa366]', 'What our true odds said these flags should win. Actual above expected = the model is finding real edges.')}
-      ${tile('Staked', '$' + Math.round(staked).toLocaleString())}
-      ${tile('Profit / loss', (pl >= 0 ? '+$' : '−$') + Math.abs(Math.round(pl)).toLocaleString(), pl >= 0 ? 'text-emerald-400' : 'text-red-400')}
-      ${tile('ROI', staked ? signed(pl / staked * 100, 1, '%') : '–', pl >= 0 ? 'text-emerald-400' : 'text-red-400')}
-      ${tile('Avg CLV vs BSP', clvs.length ? signed(clvs.reduce((a, b) => a + b, 0) / clvs.length * 100, 1, '%') : '–', 'text-white', 'Our price against the Betfair starting price. Beating BSP over time is the best early sign of a real edge, long before profit is reliable.')}
-    </div>
-    <p class="text-[11px] text-gray-500 mb-3">To-win-$100 staking at the price published before the race (stake = 100 ÷ (price − 1), capped at $75). ${pending > 0 ? pending + ' flags are still waiting on results.' : ''} Flags are frozen once a race result arrives, so this can't be rewritten after the fact.</p>
-    <div class="overflow-x-auto"><table class="w-full text-left font-mono-numbers text-xs">
-      <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider"><tr>
-        <th class="p-3">Date</th><th class="p-3 font-sans">Race</th><th class="p-3 font-sans">Horse</th><th class="p-3">Taken</th><th class="p-3">True</th><th class="p-3">BSP</th><th class="p-3">CLV</th><th class="p-3">Fin</th><th class="p-3">Stake</th><th class="p-3">P/L</th></tr></thead>
-      <tbody class="divide-y divide-[#1e2638]">${graded.map(g => `
-        <tr><td class="p-3">${esc(g.race.meeting_date || '')}</td><td class="p-3 font-sans">${esc(g.track || '')} R${g.race.race_number}</td>
-          <td class="p-3 font-sans text-white font-bold">${esc(g.horse_name)}</td><td class="p-3">${money(g.market_price)}</td><td class="p-3 text-[#ffa366]">${money(g.fair_price)}</td>
-          <td class="p-3">${money(g.result_bsp)}</td><td class="p-3 ${g.clv > 0 ? 'text-emerald-400' : 'text-gray-400'}">${g.clv === null ? '–' : signed(g.clv * 100, 0, '%')}</td>
-          <td class="p-3 ${g.win ? 'text-emerald-400 font-bold' : ''}">${g.finish_pos}</td><td class="p-3">$${num(g.stake, 2)}</td>
-          <td class="p-3 ${g.pl >= 0 ? 'text-emerald-400' : 'text-red-400'}">${g.pl >= 0 ? '+' : '−'}$${num(Math.abs(g.pl), 2)}</td></tr>`).join('') ||
-        '<tr><td colspan="10" class="p-8 text-center text-gray-500">No graded flags yet. Results arrive with the night sync; the record builds from here.</td></tr>'}</tbody>
-    </table></div>`;
 }
 
 // ---------------------------------------------------------------- meeting review extras

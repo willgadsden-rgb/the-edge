@@ -1,0 +1,24 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install pytest pandas numpy
+      - name: Rules and staking tests
+        run: python -m pytest tests/ -q
+      - name: Import check (no syntax errors in the engine)
+        run: python -c "import plays, stars, staking_engine, speedmap_engine, model_v2, model_v3, publish, history_db"
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Site scripts parse
+        run: for f in web/*.js web/netlify/functions/*.js; do node --check "$f" || exit 1; done

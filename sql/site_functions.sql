@@ -1,5 +1,16 @@
 CREATE TABLE IF NOT EXISTS edge.model_params (name TEXT PRIMARY KEY, fitted_at TEXT, params_json TEXT);
 
+-- Blackbook: horses the syndicate is following. Read with the public key; written
+-- only by the Netlify function (service key).
+CREATE TABLE IF NOT EXISTS public.edge_blackbook (
+  horse_name TEXT PRIMARY KEY, note TEXT, added_by TEXT, created_at TEXT, source TEXT, removed INTEGER DEFAULT 0);
+ALTER TABLE public.edge_blackbook ENABLE ROW LEVEL SECURITY;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.edge_blackbook FROM anon, authenticated;
+GRANT SELECT ON public.edge_blackbook TO anon, authenticated;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'edge_blackbook'
+  AND policyname = 'site can read') THEN
+  CREATE POLICY "site can read" ON public.edge_blackbook FOR SELECT TO anon, authenticated USING (true); END IF; END $$;
+
 -- Bet log. The site reads it with the public key; only the Netlify function
 -- (service key, PIN-protected) can add or void bets.
 CREATE TABLE IF NOT EXISTS public.edge_bets (

@@ -56,6 +56,7 @@
       <button onclick="switchTab('horses')" id="tab-horses-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Horse Search</button>
       <button onclick="switchTab('compare')" id="tab-compare-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Compare Horses</button>
       <button onclick="switchTab('bets')" id="tab-bets-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Bet Log</button>
+      <button onclick="switchTab('stars')" id="tab-stars-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Stars &amp; Blackbook <span id="starsBadge" class="hidden ml-1 px-1.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-mono-numbers"></span></button>
       <button onclick="switchTab('lab')" id="tab-lab-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Pattern Lab</button>
       <button onclick="switchTab('record')" id="tab-record-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">Track Record</button>
       <button onclick="switchTab('guide')" id="tab-guide-btn" class="nav-tab w-full text-left px-3 py-2 rounded-lg font-bold">How to read it</button>
@@ -90,6 +91,7 @@
       <button onclick="switchTab('horses')" id="mtab-horses-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Horses</button>
       <button onclick="switchTab('compare')" id="mtab-compare-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Compare</button>
       <button onclick="switchTab('bets')" id="mtab-bets-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Bets</button>
+      <button onclick="switchTab('stars')" id="mtab-stars-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Stars</button>
       <button onclick="switchTab('lab')" id="mtab-lab-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Lab</button>
       <button onclick="switchTab('record')" id="mtab-record-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Record</button>
       <button onclick="switchTab('guide')" id="mtab-guide-btn" class="nav-tab px-3 py-1.5 rounded-lg font-bold text-xs">Guide</button>
@@ -218,6 +220,9 @@
         <div id="horseResults" class="space-y-2"></div>
       </section>
 
+      <!-- STARS & BLACKBOOK -->
+      <section id="section-stars" class="hidden space-y-6"><div id="starsBody"></div></section>
+
       <!-- PATTERN LAB -->
       <section id="section-lab" class="hidden space-y-4">
         <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
@@ -267,6 +272,11 @@
           <h2 class="text-white font-black text-xl uppercase tracking-widest">How to read it</h2>
           <p><b class="text-white">Form L</b>: the horse's expected run today in lengths against the typical winner of this class at this level of track (metro, provincial, country). <b class="text-emerald-400">Green</b> 0 or better = good enough to win. <b class="text-amber-300">Yellow</b> = within 2 lengths under: around the mark, needs a little improvement or a soft race. <b class="text-red-400">Red</b> = more than 2 lengths under. So &minus;2.3L means it rates about 2&frac13; lengths behind a typical winner of today's race.</p>
           <p><b class="text-white">Next to the name</b>: its average rating over the last 5 rated runs (in brackets), the Pattern Lab angles (▲ market under-rates, ▼ over-rates), and today's track condition: <b class="text-emerald-400">✓</b> suited (wins 25%+ or places half the time there, or rates 2+ points better there), <b class="text-amber-300">~</b> fair, <b class="text-red-400">✗</b> poor (3+ runs there without a win and rarely placing), <b>?</b> never raced on it. Click the horse for its full dry / soft / heavy / synthetic record.</p>
+          <p><b class="text-white">★ Plays board</b> (top of Live Cards): the high-percentage shortlist. A runner is a play only when it passes every rule — our chance 25%+, the price at or above our own, top-2 form in the race with decent depth, maps in the first half of the field without a 3-wide or pocketed tag, not poor on today's going, and no fade angle. Beside it sit the <b>strong chances one rule short</b> (the missing rule is named) and the <b>fades</b>. Open any runner to see the rules ticked and crossed.</p>
+          <p><b class="text-white">Stars &amp; Blackbook</b>: Rising Stars are lightly raced horses (8 starts or fewer) that ran a new peak or are climbing, within 1.5 lengths of a winning standard for their class. Tap ☆ on any horse to add it to the blackbook; when a starred or blackbooked horse turns up on a card we've loaded, a green button appears on the plays board and in the list.</p>
+          <p><b class="text-white">Track Record</b>: every play, value flag, top pick and fade is written to a paper ledger before the race at the price we published and never changed. It grades them against the result and the Betfair SP — winners against expected, P&amp;L at $100-to-win staking, ROI at BSP after commission, and how often we beat the BSP. "Proven" means 500+ graded bets, more winners than expected, a positive return at BSP and beating the BSP more often than not. Until then it's a test, not a tip.</p>
+          <p><b class="text-white">Jockey, stable and trials</b>: beside the rider's name are the jockey's and trainer's 12-month strike rates (green 15%+, red under 6%), the jockey-for-trainer combination, a ▲/▼ class move against last start's par, a first-starter flag and the latest jump-out. The full records, plus Form King's own expected and peak figures, are in the horse's panel.</p>
+          <p><b class="text-white">Last runs</b> now also show the class of that race, where it was at the 800m and 400m, and <b>out of it</b> — wins since by the other runners in that race. A race producing winners was a good race.</p>
           <p><b class="text-white">Bet Log</b>: log every bet (or press <b>+ Log bet</b> in a horse's panel). Stake = $100 ÷ (odds − 1), capped at $75. Bets settle themselves from the night results, with P&amp;L, ROI, CLV against Betfair SP, open exposure and a split by who placed them.</p>
           <p><b class="text-white">Through the preparation</b> (in a horse's panel): its average and best rating 1st-up, 2nd-up, 3rd-up, 4th-up and 5th-up+, in lengths against today's par, with today's stage and its peak stage marked.</p>
           <p><b class="text-white">Compare Horses</b> (left menu, or ⚖ Compare above the Odds Matrix): a ratings-to-lengths calculator for any distance, and a side-by-side of up to four horses. It shows the expected rating at the trip and going you pick (same weighting as Form L), lengths between each pair, best distance, track condition and prep-stage averages, improvement signals (prep pattern, trend, headroom to its best, trip/going suitability) and an overlaid chart of their last 12 rated runs.</p>
@@ -302,6 +312,7 @@
 <script src="race-tabs.js"></script>
 <script src="compare.js"></script>
 <script src="bets.js"></script>
+<script src="plays.js"></script>
 <script>
   const SUPABASE_URL = "https://xquwxvxdoaolggvilqkv.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_Wo3V2pBXOVWXrsnjFxkAWg_o_ym_-NS";
@@ -346,7 +357,7 @@
     const blend = {}; let bTot = 0;
     // Model v2 (fitted on results): score = runner's form part + market weight x log(1/price),
     // then re-normalised over the field. Same maths as publish.py; modifiers add points / 8.
-    const useV2 = race.model_version === 'v2' && race.v2_mkt && active.length &&
+    const useV2 = (race.model_version === 'v2' || race.model_version === 'v3') && race.v2_mkt && active.length &&
       active.every(r => r.v2_static !== null && r.v2_static !== undefined && mkt(r) > 1);
     race._v2 = useV2;
     if (useV2) {
@@ -516,7 +527,10 @@
       chip(`🎯 Par ${num(race.form_par)}`, 'Median winning rating for this class at this level of track') +
       chip(`🌤️ ${esc(m.going || '')}`) + chip(`🛤️ ${esc(m.rail || '')}`) +
       chip(`⚡ ${esc((race.tempo || '').toLowerCase())} tempo · ${race.leaders ?? 0} leaders`, 'From the real early speed of the field') +
-      (race._v2 ? chip('🧠 Model v2', 'Prices from the model fitted on results (form signals on top of the market), re-normalised to a 100% book') : chip('⚖️ 70/30 blend', 'Prices from the 70% market / 30% form-model blend')) +
+      (race._v2 ? chip('🧠 Model ' + (race.model_version || 'v2'),
+        race.model_version === 'v3'
+          ? "Prices from the model fitted on every runner in every Australian race from Betfair's own results, with our Form King ratings on top, re-normalised to a 100% book"
+          : 'Prices from the model fitted on our results (form signals on top of the market), re-normalised to a 100% book') : chip('⚖️ 70/30 blend', 'Prices from the 70% market / 30% form-model blend')) +
       (scr.length ? chip(`✂️ Scratched: ${scr.map(r => (r.saddlecloth ?? '') + ' ' + esc(r.horse_name)).join(', ')}`) : '');
     renderRaceTab(race);
     document.getElementById('modsActive').classList.toggle('hidden', !(window.EdgeMods && EdgeMods.active(race)));
@@ -532,7 +546,7 @@
           <td class="p-3 text-gray-400 font-bold">${r.saddlecloth ?? ''}</td>
           <td class="p-3 font-sans">
             <div class="text-white font-bold"><button class="hover:text-[#ff6600] underline decoration-dotted decoration-gray-600 underline-offset-4" title="Open full form" onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})'>${esc(r.horse_name)}</button> ${r.gear_changes ? `<span class="pill sect-yellow ml-1" title="${esc(r.gear_changes)}">GEAR</span>` : ''}${avgBadge(r)} <span class="inline-flex flex-wrap gap-0.5 align-middle ml-1">${angleTags(r, race)}${goingTag(r, race)}</span></div>
-            <div class="text-[10px] text-gray-500">${esc(r.jockey || '–')}${r.apprentice_claim ? ` (a${num(r.apprentice_claim, 1)})` : ''} · ${esc(r.trainer || '–')} · ${num(r.weight, 1)}kg</div>
+            <div class="text-[10px] text-gray-500">${esc(r.jockey || '–')}${r.apprentice_claim ? ` (a${num(r.apprentice_claim, 1)})` : ''} · ${esc(r.trainer || '–')} · ${num(r.weight, 1)}kg ${riderTags(r)}</div>
             <div class="mt-1.5">${ratedRuns(r, race)}</div>
           </td>
           <td class="p-3">${r.barrier ?? ''}</td>
@@ -546,7 +560,7 @@
           <td class="p-3 text-white font-bold">${money(r._market)}${steam}</td>
           <td class="p-3 ${r._edge > 0 ? 'text-emerald-400' : 'text-gray-500'}">${r._edge === null ? '–' : signed(r._edge * 100, 0, '%')}</td>
           <td class="p-3 text-gray-400">${money(r._mao)}</td>
-          <td class="p-3">${r._value ? '<span class="pill sect-green">✅ VALUE</span>' : r._fade ? `<span class="pill sect-red" data-tip="Model v2 rates it at ${num(r._p * 100, 1)}% against the market's ${num(r._pmkt * 100, 1)}%. On unseen races these won about 22% less often than their price said. Lay candidate, or leave it out of multis.">FADE</span>` : r._scratched ? '<span class="pill sect-red">SCR</span>' : ''}</td>
+          <td class="p-3">${betCell(r, race)}</td>
         </tr>
         ${open ? `<tr><td colspan="14" class="px-4 py-5 md:px-6 bg-[#0d1117]">${detailPanel(r, race)}</td></tr>` : ''}`;
     }).join('') || '<tr><td colspan="14" class="p-10 text-center text-gray-500">No runners.</td></tr>';
@@ -689,26 +703,30 @@
           <div class="flex gap-2"><button onclick='event.stopPropagation();prefillBet("${race ? race.race_id : ''}", ${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-xs font-bold text-emerald-400 border border-emerald-500/40 rounded-lg px-3 py-1.5 hover:bg-emerald-500/10 whitespace-nowrap">+ Log bet</button>
           <button onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-xs font-bold text-[#ff6600] border border-[#ff6600]/40 rounded-lg px-3 py-1.5 hover:bg-[#ff6600]/10 whitespace-nowrap">Full form &amp; records →</button></div>
         </div>
+        ${r.play_checks ? block('High-percentage play: the rules', playChecksBlock(r)) : ''}
         ${block('Through the preparation', prepStageBlock(r, race))}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           ${block('Signals in the score', sigs)}
           ${block('Angles &amp; track condition', (ang || '<span class="text-gray-500 text-[11px]">no Pattern Lab angles</span>') + goingDetail(r, race))}
+          ${block('Jockey &amp; stable', connectionsBlock(r))}
+          ${block('Jump-outs &amp; trials', trialsBlock(r))}
         </div>
         ${block('Last runs', `<div class="overflow-x-auto"><table class="w-full text-xs">
           <thead class="text-gray-500 uppercase text-[10px]"><tr>
-            <th class="text-left py-2 pr-3">Date</th><th class="text-left pr-3">Track</th><th class="px-2">Dist</th><th class="text-left px-2">Going</th><th class="px-2">Prep</th>
-            <th class="px-2">Fin</th><th class="px-2">Margin</th><th class="px-2">Settled</th><th class="px-2">Rating</th><th class="px-2">SP</th><th class="px-2">BSP</th><th class="text-left pl-3">Stewards</th></tr></thead>
+            <th class="text-left py-2 pr-3">Date</th><th class="text-left pr-3">Track</th><th class="px-2">Dist</th><th class="text-left px-2">Class</th><th class="text-left px-2">Going</th><th class="px-2">Prep</th>
+            <th class="px-2">Fin</th><th class="px-2">Margin</th><th class="px-2">800/400</th><th class="px-2">Rating</th><th class="px-2">SP</th><th class="px-2" data-tip="Wins since, out of the runners in that race: a strong number means the race was a good one">Out of it</th><th class="text-left pl-3">Stewards</th></tr></thead>
           <tbody>${runs.map(x => `
             <tr class="border-t border-[#1e2638]">
               <td class="py-2 pr-3 whitespace-nowrap">${esc(x.date || '')}</td><td class="pr-3 whitespace-nowrap">${esc(x.track || '')}</td><td class="text-center px-2">${x.dist ?? ''}</td>
+              <td class="px-2 whitespace-nowrap text-gray-400" data-tip="${esc(x.rname || '')}">${esc(x.class || '')}</td>
               <td class="px-2 whitespace-nowrap">${esc(x.going || '')}</td><td class="text-center px-2">${x.prep ?? ''}</td>
               <td class="text-center px-2 ${x.pos === 1 ? 'text-emerald-400 font-bold' : ''}">${x.pos ?? ''}${x.field ? '/' + x.field : ''}</td>
               <td class="text-center px-2">${x.pos === 1 ? signed(x.margin, 1) : num(x.margin === null ? null : Math.abs(x.margin), 1)}</td>
-              <td class="text-center px-2">${x.settle ?? ''}</td>
+              <td class="text-center px-2 text-gray-400">${x.pos800 ?? x.settle ?? '–'}${x.pos400 ? ' / ' + x.pos400 : ''}</td>
               <td class="text-center px-2 font-bold ${ratingClass(x.rating, par, race)}">${num(x.rating, 1)}</td>
-              <td class="text-center px-2">${money(x.sp)}</td><td class="text-center px-2">${money(x.bsp)}</td>
+              <td class="text-center px-2">${money(x.sp)}</td><td class="text-center px-2">${outOfRace(x)}</td>
               <td class="pl-3 font-sans ${x.comment ? 'text-amber-300' : 'text-gray-600'}">${esc(x.comment || '')}</td>
-            </tr>`).join('') || '<tr><td colspan="12" class="py-3 text-gray-500">No race runs on file (first starter).</td></tr>'}</tbody>
+            </tr>`).join('') || '<tr><td colspan="13" class="py-3 text-gray-500">No race runs on file (first starter).</td></tr>'}</tbody>
         </table></div>`)}
       </div>`;
   }
@@ -756,12 +774,13 @@
 
   // ---------- tabs ----------
   function switchTab(tab) {
-    ['racing', 'results', 'horses', 'compare', 'bets', 'lab', 'record', 'guide'].forEach(t => {
+    ['racing', 'results', 'horses', 'compare', 'bets', 'stars', 'lab', 'record', 'guide'].forEach(t => {
       document.getElementById('section-' + t).classList.toggle('hidden', t !== tab);
       document.getElementById('tab-' + t + '-btn').classList.toggle('active', t === tab);
       document.getElementById('mtab-' + t + '-btn').classList.toggle('active', t === tab);
     });
     if (tab === 'lab') loadLab();
+    if (tab === 'stars') renderStars();
     if (tab === 'compare') renderCompare();
     if (tab === 'bets') loadBets();
     if (tab === 'record') loadRecord();
@@ -826,7 +845,7 @@
 
   // ---------- start ----------
   document.getElementById('calendarInput').addEventListener('change', e => { S.view = 'ALL'; loadMeetings(e.target.value); });
-  loadMeetings(melbDate());
+  loadMeetings(melbDate()).then(() => { loadWatchlists().then(renderPlays); syncAngleTags(); });
 </script>
 </body>
 </html>

@@ -407,6 +407,12 @@ def publish_all(db, cards):
             except Exception as exc:
                 db.conn.rollback()
                 print("PUBLISH FAILED {}: {}".format(card.get("id"), exc), file=sys.stderr)
+        if model is not None:
+            try:
+                print("Rising Stars: {} listed".format(publish.publish_stars(db, model)))
+            except Exception as exc:
+                db.conn.rollback()
+                print("STARS FAILED: {}".format(exc), file=sys.stderr)
     except Exception as exc:
         print("PUBLISH FAILED: {}".format(exc), file=sys.stderr)
 
