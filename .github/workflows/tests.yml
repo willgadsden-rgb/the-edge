@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
-      - run: pip install pytest pandas numpy
+      - run: pip install pytest pandas numpy requests psycopg[binary]
       - name: Rules and staking tests
         run: python -m pytest tests/ -q
       - name: Import check (no syntax errors in the engine)
