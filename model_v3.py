@@ -74,6 +74,11 @@ FK_FEATURES = [
     ("going_suit", "suited by today's going"),
     ("early", "settles back (vs leads)"),
     ("barrier_frac", "wide barrier"),
+    ("firm", "backed since the market opened"),
+    ("drift", "drifted since the market opened"),
+    ("closer", "makes ground from the 800m"),
+    ("prep_peak", "at the run number it peaks at"),
+    ("prep_past", "deeper in the prep than it has ever won from"),
 ]
 BF_NAMES = [f for f, _ in BF_FEATURES]
 FK_NAMES = [f for f, _ in FK_FEATURES]
