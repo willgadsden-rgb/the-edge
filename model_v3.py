@@ -87,7 +87,7 @@ hkey = lambda s: re.sub(r"[^a-z0-9]", "", re.sub(r"\(.*?\)", "", str(s).lower())
 KEEP = {"LOCAL_MEETING_DATE": "date", "SCHEDULED_RACE_TIME": "time", "TRACK": "track", "STATE_CODE": "state",
         "RACE_NO": "race_no", "WIN_MARKET_ID": "market_id", "DISTANCE": "distance", "RACE_TYPE": "rtype",
         "TAB_NUMBER": "tab", "SELECTION_NAME": "horse", "WIN_RESULT": "win", "WIN_BSP": "bsp",
-        "PLACE_RESULT": "placed", "WIN_PREPLAY_MAX_PRICE_TAKEN": "pp_max",
+        "PLACE_RESULT": "placed", "PLACE_BSP": "place_bsp", "WIN_PREPLAY_MAX_PRICE_TAKEN": "pp_max",
         "WIN_PREPLAY_MIN_PRICE_TAKEN": "pp_min", "WIN_PREPLAY_WEIGHTED_AVERAGE_PRICE_TAKEN": "pp_wap",
         "WIN_PREPLAY_VOLUME": "pp_vol"}
 
@@ -134,7 +134,7 @@ def load_betfair(first_year=FIRST_YEAR, today=None):
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["win"] = (df["win"].astype(str).str.upper() == "WINNER").astype(float)
     df["placed"] = (df["placed"].astype(str).str.upper() == "WINNER").astype(float)
-    for c in ("bsp", "pp_max", "pp_min", "pp_wap", "pp_vol", "distance"):
+    for c in ("bsp", "place_bsp", "pp_max", "pp_min", "pp_wap", "pp_vol", "distance"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df = df[df["date"].notna() & (df["bsp"] > 1.0) & (df["bsp"] <= 1000.0) & np.isfinite(df["bsp"])].copy()
     df["hkey"] = df["horse"].map(hkey)
@@ -426,6 +426,71 @@ def angle_table(df, state="VIC", since="2023-01-01", split="2025-01-01"):
     return {"state": state, "since": since, "split": split, "rows": out, "runs": int(len(d)), "races": int(d["market_id"].nunique())}
 
 
+
+# ------------------------------------------------------------------ the place model
+def fit_logit_binary(X, y, l2=L2, iters=40):
+    """Ridge logistic by Newton steps. Column 0 is the market term, unpenalised."""
+    w = np.zeros(X.shape[1])
+    w[0] = 1.0
+    pen = np.full(X.shape[1], l2); pen[0] = 0.0
+    for _ in range(iters):
+        p = 1.0 / (1.0 + np.exp(-np.clip(X @ w, -30, 30)))
+        g = X.T @ (p - y) + pen * w
+        H = (X * (p * (1 - p))[:, None]).T @ X + np.diag(pen) + 1e-8 * np.eye(X.shape[1])
+        step = np.linalg.solve(H, g)
+        w -= step
+        if np.abs(step).max() < 1e-7:
+            break
+    return w
+
+
+def evaluate_place(df, names=NAMES, label="v3-place"):
+    """Can we beat the place market? Same features, target is a top-three finish,
+    judged against Betfair's own place starting price."""
+    d = df[(df["date"] >= pd.Timestamp(TRAIN_FROM)) & df["place_bsp"].notna() & (df["place_bsp"] > 1)
+           & df["placed"].notna() & (df["n"] >= 8)].sort_values(["date", "time", "market_id"]).reset_index(drop=True)
+    if len(d) < 20000:
+        return {"label": label, "n": int(len(d)), "enough_data": False}
+    split = pd.Timestamp(SPLIT_DATE)
+    tr, te = d[d["date"] < split], d[d["date"] >= split].copy()
+    mu, sd = tr[names].mean(), tr[names].std().replace(0, 1.0)
+    D = lambda x, cols: np.column_stack([np.log(1.0 / x["place_bsp"].values)]
+                                        + ([((x[cols] - mu[cols]) / sd[cols]).values] if cols else []))
+    w_m = fit_logit_binary(D(tr, []), tr["placed"].values)
+    w_f = fit_logit_binary(D(tr, names), tr["placed"].values)
+    y = te["placed"].values
+    pm = 1 / (1 + np.exp(-np.clip(D(te, []) @ w_m, -30, 30)))
+    pf = 1 / (1 + np.exp(-np.clip(D(te, names) @ w_f, -30, 30)))
+    ll = lambda p: float(-np.mean(y * np.log(np.clip(p, 1e-9, 1)) + (1 - y) * np.log(np.clip(1 - p, 1e-9, 1))))
+    te["p_place"] = pf
+    te["p_place_mkt"] = pm
+    band = te["place_bsp"].between(1.3, 8.0)
+    over = te[band & (te["p_place"] >= 1.15 * te["p_place_mkt"])]
+    pnl = lambda g: round(float(np.where(g["placed"] == 1, (g["place_bsp"] - 1) * (1 - COMMISSION), -1.0).mean()) * 100, 1) if len(g) else None
+    def _day_gain(x):
+        yy = x["placed"].values
+        lg = lambda p: float(-np.mean(yy * np.log(np.clip(p, 1e-9, 1)) + (1 - yy) * np.log(np.clip(1 - p, 1e-9, 1))))
+        return lg(x["p_place_mkt"].values) - lg(x["p_place"].values)
+    boot = _boot(te, _day_gain)
+    allmu, allsd = d[names].mean(), d[names].std().replace(0, 1.0)
+    Xa = np.column_stack([np.log(1.0 / d["place_bsp"].values), ((d[names] - allmu) / allsd).values])
+    w = fit_logit_binary(Xa, d["placed"].values)
+    return {
+        "label": label, "fitted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "enough_data": True, "n_train": int(len(tr)), "n_test": int(len(te)),
+        "ll_market": round(ll(pm), 5), "ll_model": round(ll(pf), 5),
+        "gain": round(ll(pm) - ll(pf), 5), "gain_ci": boot,
+        "strike_all": round(float(te["placed"].mean()) * 100, 1),
+        "overlays": {"n": int(len(over)), "placed": int(over["placed"].sum()),
+                     "strike": round(float(over["placed"].mean()) * 100, 1) if len(over) else None,
+                     "roi_place_bsp_net": pnl(over)},
+        "all_in_band": {"n": int(band.sum()), "roi_place_bsp_net": pnl(te[band])},
+        "market_coef": float(w[0]), "coefs": {n: float(w[i + 1] / allsd[n]) for i, n in enumerate(names)},
+        "means": {n: float(allmu[n]) for n in names},
+        "importance_per_sd": {n: round(float(w[i + 1]), 4) for i, n in enumerate(names)},
+        "use_for_pricing": bool(boot and boot[0] is not None and boot[0] > 0),
+    }
+
 # ------------------------------------------------------------------ live scoring
 def live_bf_features(runs, today, distance, track, is_maiden_today, vic_tracks=None, career=None):
     """The same history features for a runner on today's card, from its Form King
@@ -562,7 +627,23 @@ def main(argv=None):
         if onlyfk and onlyfk.get("use_for_pricing") and not best.get("use_for_pricing"):
             best = onlyfk            # it earns the cards on the races it will price
         best["compared"] = {"market_form_gain": base["gain_per_race"], "with_ratings_gain": full["gain_per_race"]}
+        place = None
+        try:
+            place = evaluate_place(df)
+            print("=== Place model (top three, against Betfair's place SP) ===")
+            if place.get("enough_data"):
+                print("Trained on {:,} runs, tested on {:,}. Log-loss market {} vs model {} (gain {} 95% CI {}).".format(
+                    place["n_train"], place["n_test"], place["ll_market"], place["ll_model"], place["gain"], place["gain_ci"]))
+                print("Beats the place market: {}. Overlays (15%+ above the market, place SP $1.30-$8): {}".format(
+                    place["use_for_pricing"], place["overlays"]))
+                print("Every runner in that band returned {}%".format(place["all_in_band"]["roi_place_bsp_net"]))
+            else:
+                print("Not enough place prices yet ({} runs).".format(place.get("n")))
+        except Exception as exc:
+            print("Place model skipped: {}".format(exc), file=sys.stderr)
         if not a.no_save:
+            if place:
+                model_v2.save(db, place, name="v3_place")
             model_v2.save(db, best, name="v3")
             model_v2.save(db, dict(angles, fitted_at=best["fitted_at"]), name="angles_bf")
             print("Saved model_params v3 ({}) and angles_bf.".format(best["label"]))
