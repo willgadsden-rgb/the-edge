@@ -49,11 +49,26 @@ def find_stars(model, today=None, horses=None):
         new_peak = r0 > prev_best
         if not (new_peak or trend >= 2.0) or vs_par < -1.5:
             continue
+        # Where the ratings are heading, not just where they are: fit the trend of
+        # its rated runs and project one more start. A horse improving 3 points a
+        # start is worth more than one that has plateaued at the same rating.
+        proj = r0
+        xs = rated["wfa_rating"].tolist()[::-1]          # oldest first
+        if len(xs) >= 3:
+            n = len(xs)
+            mx = (n - 1) / 2.0
+            my = sum(xs) / n
+            denom = sum((i - mx) ** 2 for i in range(n))
+            slope = sum((i - mx) * (xs[i] - my) for i in range(n)) / denom if denom else 0.0
+            slope = max(-3.0, min(3.0, slope))
+            proj = r0 + max(0.0, slope)                  # never project a decline into a star
+        proj_vs_par = (proj - par["par"]) * lpp
         won = last["finish_pos"] == 1
         nw = last.get("next_wins")
         nw = int(nw) if pd.notna(nw) else 0
         score = (min(max(vs_par, 0), 6) * 2 + min(max(r0 - prev_best, 0), 8) * 1.5 + (2 if won else 0)
-                 + min(nw, 3) + (1 if career <= 4 else 0) + min(max(trend, 0), 6) * 0.5)
+                 + min(nw, 3) + (1 if career <= 4 else 0) + min(max(trend, 0), 6) * 0.5
+                 + min(max(proj - r0, 0), 3) * 1.5)        # reward where it is heading
         reasons = []
         if vs_par >= 0:
             reasons.append("ran {:.1f}L above the winning par".format(vs_par))
@@ -68,6 +83,8 @@ def find_stars(model, today=None, horses=None):
             reasons.append("won" + (" by {:.1f}L".format(abs(m)) if pd.notna(m) and m else ""))
         if nw:
             reasons.append("{} winner{} out of the race since".format(nw, "s" if nw > 1 else ""))
+        if proj - r0 >= 1:
+            reasons.append("improving about {:.1f} points a start".format(proj - r0))
         info = (horses or {}).get(name, {})
         out.append({
             "horse_name": name, "score": round(float(score), 1), "career_starts": int(career),
@@ -76,6 +93,7 @@ def find_stars(model, today=None, horses=None):
             "last_class": last["restrictions"] or last["race_name"], "last_pos": int(last["finish_pos"]),
             "last_rating": round(r0, 1), "prev_best": round(prev_best, 1), "vs_par_l": round(float(vs_par), 1),
             "trend": round(float(trend), 1), "next_wins": nw, "reasons": "; ".join(reasons),
+            "projected": round(float(proj), 1), "projected_vs_par_l": round(float(proj_vs_par), 1),
             "ratings": ",".join("{:.0f}".format(x) for x in rated["wfa_rating"].head(6).tolist()[::-1]),
             "sire": info.get("sire"), "trainer": info.get("trainer"), "foal_date": info.get("foal_date"),
         })

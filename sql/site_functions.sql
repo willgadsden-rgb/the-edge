@@ -251,3 +251,78 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.edge_track_recent(text, integer) TO anon, authenticated;
+
+
+-- Which sires' progeny do what, in Victoria. Only from runs we hold ratings or
+-- results for, and only sires with enough runners to mean anything.
+CREATE OR REPLACE FUNCTION public.edge_sire_stats(p_min_runs integer DEFAULT 40)
+RETURNS TABLE (sire text, runs bigint, wins bigint, win_pct numeric, place_pct numeric,
+               first_up_runs bigint, first_up_win_pct numeric,
+               wet_runs bigint, wet_win_pct numeric, dry_win_pct numeric,
+               sprint_win_pct numeric, route_win_pct numeric, avg_rating numeric)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
+  WITH r AS (
+    SELECT h.sire, x.finish_pos, x.race_in_prep, x.wfa_rating, ra.going, ra.distance
+    FROM edge.runs x
+    JOIN edge.races ra ON ra.race_id = x.race_id
+    JOIN edge.horses h ON lower(h.horse_name) = lower(x.horse_name)
+    WHERE h.sire IS NOT NULL AND h.sire <> '' AND x.finish_pos IS NOT NULL
+      AND ra.race_date >= to_char(current_date - 1095, 'YYYY-MM-DD')
+  )
+  SELECT sire, count(*), count(*) FILTER (WHERE finish_pos = 1),
+         round(100.0 * count(*) FILTER (WHERE finish_pos = 1) / count(*), 1),
+         round(100.0 * count(*) FILTER (WHERE finish_pos <= 3) / count(*), 1),
+         count(*) FILTER (WHERE race_in_prep = 1),
+         round(100.0 * count(*) FILTER (WHERE race_in_prep = 1 AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE race_in_prep = 1), 0), 1),
+         count(*) FILTER (WHERE going ~* '^(soft|slow|heavy)'),
+         round(100.0 * count(*) FILTER (WHERE going ~* '^(soft|slow|heavy)' AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE going ~* '^(soft|slow|heavy)'), 0), 1),
+         round(100.0 * count(*) FILTER (WHERE going !~* '^(soft|slow|heavy)' AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE going !~* '^(soft|slow|heavy)'), 0), 1),
+         round(100.0 * count(*) FILTER (WHERE distance <= 1300 AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE distance <= 1300), 0), 1),
+         round(100.0 * count(*) FILTER (WHERE distance >= 1800 AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE distance >= 1800), 0), 1),
+         round(avg(NULLIF(wfa_rating, 0))::numeric, 1)
+  FROM r GROUP BY sire HAVING count(*) >= p_min_runs ORDER BY 4 DESC
+$$;
+
+GRANT EXECUTE ON FUNCTION public.edge_sire_stats(integer) TO anon, authenticated;
+
+
+-- How a stable's runners go by where they are in a preparation: some win first
+-- up, some need three runs. Jockeys too, so the card's strike rates have a shape.
+CREATE OR REPLACE FUNCTION public.edge_stable_stats(p_kind text DEFAULT 'trainer', p_min_runs integer DEFAULT 60)
+RETURNS TABLE (name text, runs bigint, wins bigint, win_pct numeric, place_pct numeric,
+               up1_runs bigint, up1_pct numeric, up2_pct numeric, up3_pct numeric, up4_pct numeric,
+               wet_pct numeric, metro_pct numeric)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = edge, public AS $$
+  WITH r AS (
+    SELECT CASE WHEN p_kind = 'jockey' THEN x.jockey ELSE e.trainer END AS name,
+           x.finish_pos, x.race_in_prep, ra.going, ra.track
+    FROM edge.runs x
+    JOIN edge.races ra ON ra.race_id = x.race_id
+    LEFT JOIN edge.entries e ON e.race_id = x.race_id AND lower(e.horse_name) = lower(x.horse_name)
+    WHERE x.finish_pos IS NOT NULL AND ra.race_date >= to_char(current_date - 1095, 'YYYY-MM-DD')
+  ), f AS (SELECT * FROM r WHERE name IS NOT NULL AND name <> '')
+  SELECT name, count(*), count(*) FILTER (WHERE finish_pos = 1),
+         round(100.0 * count(*) FILTER (WHERE finish_pos = 1) / count(*), 1),
+         round(100.0 * count(*) FILTER (WHERE finish_pos <= 3) / count(*), 1),
+         count(*) FILTER (WHERE race_in_prep = 1),
+         round(100.0 * count(*) FILTER (WHERE race_in_prep = 1 AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE race_in_prep = 1), 0), 1),
+         round(100.0 * count(*) FILTER (WHERE race_in_prep = 2 AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE race_in_prep = 2), 0), 1),
+         round(100.0 * count(*) FILTER (WHERE race_in_prep = 3 AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE race_in_prep = 3), 0), 1),
+         round(100.0 * count(*) FILTER (WHERE race_in_prep >= 4 AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE race_in_prep >= 4), 0), 1),
+         round(100.0 * count(*) FILTER (WHERE going ~* '^(soft|slow|heavy)' AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE going ~* '^(soft|slow|heavy)'), 0), 1),
+         round(100.0 * count(*) FILTER (WHERE track IN ('Flemington','Caulfield','Moonee Valley','Sandown Hillside','Sandown Lakeside') AND finish_pos = 1)
+               / NULLIF(count(*) FILTER (WHERE track IN ('Flemington','Caulfield','Moonee Valley','Sandown Hillside','Sandown Lakeside')), 0), 1)
+  FROM f GROUP BY name HAVING count(*) >= p_min_runs ORDER BY 4 DESC
+$$;
+
+GRANT EXECUTE ON FUNCTION public.edge_stable_stats(text, integer) TO anon, authenticated;

@@ -109,7 +109,8 @@ PUB_TABLES = {
                  ("last_date", "TEXT"), ("last_track", "TEXT"), ("last_distance", "INTEGER"), ("last_class", "TEXT"),
                  ("last_pos", "INTEGER"), ("last_rating", "REAL"), ("prev_best", "REAL"), ("vs_par_l", "REAL"),
                  ("trend", "REAL"), ("next_wins", "INTEGER"), ("reasons", "TEXT"), ("ratings", "TEXT"),
-                 ("sire", "TEXT"), ("trainer", "TEXT"), ("foal_date", "TEXT"), ("updated_at", "TEXT")],
+                 ("sire", "TEXT"), ("trainer", "TEXT"), ("foal_date", "TEXT"),
+                 ("projected", "REAL"), ("projected_vs_par_l", "REAL"), ("updated_at", "TEXT")],
     },
 }
 

@@ -203,7 +203,11 @@
         <div id="reviewRaceView" class="bg-[#11151d] border border-[#1e2638] rounded-xl overflow-hidden shadow-2xl p-6">
           <h2 class="text-white font-black text-xl mb-1 uppercase tracking-widest">Result review</h2>
           <p id="reviewNote" class="text-[11px] text-gray-500 mb-4">Results arrive with the night sync (about 11:30pm) or when you press Sync after racing.</p>
+          <div class="flex flex-wrap gap-2 mb-3">
+            <button id="reportBtn" onclick="writeMeetingReport()" class="text-xs font-bold text-[#ff6600] border border-[#ff6600]/40 rounded-lg px-3 py-1.5 hover:bg-[#ff6600]/10">✍️ Write the review</button>
+          </div>
           <div id="reviewSummary" class="mb-5"></div>
+          <div id="groundBody" class="mb-5"></div>
           <div class="overflow-x-auto">
             <table class="w-full text-left font-mono-numbers text-xs">
               <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider border-b border-[#1e2638]">
@@ -237,6 +241,18 @@
         <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
           <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-3">Pattern Lab</h2>
           <div id="labBody"></div>
+        </div>
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-1">Is our book honest?</h2>
+          <div id="calibBody"></div>
+        </div>
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-1">Sires</h2>
+          <div id="sireBody"></div>
+        </div>
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-1">Stables and jockeys</h2>
+          <div id="stableBody"></div>
         </div>
       </section>
 
@@ -351,6 +367,7 @@
 <script src="plays.js"></script>
 <script src="exotics.js"></script>
 <script src="ask.js"></script>
+<script src="insights.js"></script>
 <script>
   const SUPABASE_URL = "https://xquwxvxdoaolggvilqkv.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_Wo3V2pBXOVWXrsnjFxkAWg_o_ym_-NS";
@@ -748,6 +765,7 @@
           <button onclick='event.stopPropagation();openHorse(${JSON.stringify(r.horse_name).replace(/'/g, "&#39;")})' class="text-xs font-bold text-[#ff6600] border border-[#ff6600]/40 rounded-lg px-3 py-1.5 hover:bg-[#ff6600]/10 whitespace-nowrap">Full form &amp; records →</button></div>
         </div>
         ${r.play_checks ? block('High-percentage play: the rules', playChecksBlock(r)) : ''}
+        ${block('This preparation', prepClock(r))}
         ${block('Through the preparation', prepStageBlock(r, race))}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           ${block('Signals in the score', sigs)}
@@ -796,6 +814,7 @@
     const race = S.races.find(r => r.race_id === S.reviewRace);
     const body = document.getElementById('reviewBody');
     renderReviewSummary();
+    if (S.reviewRace && S.reviewRace !== 'ALL') renderGround(S.reviewRace); else document.getElementById('groundBody').innerHTML = '';
     if (!race) { body.innerHTML = ''; return; }
     const rows = (S.runners[race.race_id] || []).slice();
     if (!race.result_in) {
@@ -825,7 +844,7 @@
       document.getElementById('tab-' + t + '-btn').classList.toggle('active', t === tab);
       document.getElementById('mtab-' + t + '-btn').classList.toggle('active', t === tab);
     });
-    if (tab === 'lab') loadLab();
+    if (tab === 'lab') { loadLab(); loadCalibration(); loadSires(); loadStables(); }
     if (tab === 'stars') renderStars();
     if (tab === 'exotics') { renderExotics(); renderQuaddy(); }
     if (tab === 'ask') askRender();

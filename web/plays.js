@@ -179,6 +179,7 @@ async function renderStars() {
       <td class="px-2 text-center">${s.career_starts}: ${s.wins}</td>
       <td class="px-2 font-mono-numbers text-center text-gray-300">${esc((s.ratings || '').split(',').join(' → '))}</td>
       <td class="px-2 text-center font-mono-numbers ${s.vs_par_l >= 0 ? 'text-emerald-400 font-bold' : 'text-amber-300'}">${signed(s.vs_par_l, 1, 'L')}</td>
+      <td class="px-2 text-center font-mono-numbers ${s.projected_vs_par_l >= 1 ? 'text-emerald-400 font-bold' : 'text-gray-300'}" data-tip="Where its ratings are heading: the trend of its rated runs carried one start forward, against the winning par for its class">${s.projected === null || s.projected === undefined ? '–' : num(s.projected, 1) + ' (' + signed(s.projected_vs_par_l, 1, 'L') + ')'}</td>
       <td class="px-2 text-[11px] text-gray-400">${esc(s.last_date || '')} ${esc(s.last_track || '')} ${s.last_distance ?? ''}m · ${ordinalTxt(s.last_pos)}</td>
       <td class="px-2 text-[11px] text-gray-300">${esc(s.reasons || '')}</td>
       <td class="pl-2 text-right">${bbButton(s.horse_name, 'rising stars', 'star')}</td>
@@ -198,8 +199,8 @@ async function renderStars() {
       <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-1">Rising Stars</h2>
       <p class="text-[11px] text-gray-500 mb-3">Lightly raced (8 starts or fewer), raced in the last 60 days, latest run a new peak or ratings climbing, and within 1.5 lengths of the winning par for its class. Ranked by a score that rewards lengths above par, the size of the jump, winning and winners out of the race. Rebuilt every sync.</p>
       <div class="overflow-x-auto"><table class="w-full text-left text-xs">
-        <thead class="text-gray-500 uppercase text-[10px]"><tr><th class="py-2">#</th><th>Horse</th><th class="px-2 text-center">Starts: wins</th><th class="px-2 text-center">Ratings (old → new)</th><th class="px-2 text-center">Last vs par</th><th class="px-2">Last run</th><th class="px-2">Why</th><th></th></tr></thead>
-        <tbody>${stars || '<tr><td colspan="8" class="py-6 text-center text-gray-500">No horse meets the bar yet. The list fills as ratings for recent runs arrive.</td></tr>'}</tbody></table></div>
+        <thead class="text-gray-500 uppercase text-[10px]"><tr><th class="py-2">#</th><th>Horse</th><th class="px-2 text-center">Starts: wins</th><th class="px-2 text-center">Ratings (old → new)</th><th class="px-2 text-center">Last vs par</th><th class="px-2 text-center">Heading for</th><th class="px-2">Last run</th><th class="px-2">Why</th><th></th></tr></thead>
+        <tbody>${stars || '<tr><td colspan="9" class="py-6 text-center text-gray-500">No horse meets the bar yet. The list fills as ratings for recent runs arrive.</td></tr>'}</tbody></table></div>
     </div>`;
 }
 async function goRace(dateStr, meetingId, raceId) {
