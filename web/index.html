@@ -114,6 +114,7 @@
         <div id="view-all-races" class="hidden space-y-6">
           <div id="alertLog" class="hidden bg-[#11151d] border border-emerald-500/30 rounded-xl px-4 py-2 mb-4"></div>
           <div id="playsBoard"></div>
+          <div id="moneyBoard"></div>
           <div id="biasBoard" class="mt-6"></div>
           <div class="bg-[#11151d] p-6 rounded-xl border border-[#1e2638] shadow-2xl">
             <h3 class="text-white font-black text-xl mb-1">Card summary</h3>
@@ -542,6 +543,7 @@
     document.getElementById('cardSummary').innerHTML = meetingStatusBar() + (lines.join('') || '<div class="text-gray-500">No races.</div>');
     document.getElementById('allRacesCards').innerHTML = cards.join('');
     renderPlays();
+    renderMoney();
     renderBias();
   }
 
@@ -599,7 +601,7 @@
           <td class="p-3">${esc(r.prep_stage || '')}${best ? ' <span class="text-[#ff6600]" title="Best stage on record">★</span>' : ''}</td>
           <td class="p-3 text-gray-300">${r._pmodel === null ? '–' : num(r._pmodel * 100, 1) + '%'}${modBadge(r)}</td>
           <td class="p-3 text-[#ffa366] font-bold">${money(r._fair)}</td>
-          <td class="p-3 text-white font-bold">${money(r._market)}${steam}</td>
+          <td class="p-3 text-white font-bold">${money(r._market)}${steam}${moveChip(r)}</td>
           <td class="p-3 ${r._edge > 0 ? 'text-emerald-400' : 'text-gray-500'}">${r._edge === null ? '–' : signed(r._edge * 100, 0, '%')}</td>
           <td class="p-3 text-gray-400">${money(r._mao)}</td>
           <td class="p-3">${resulted ? resultCell(r) : betCell(r, race)}</td>

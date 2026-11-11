@@ -684,3 +684,47 @@ function meetingStatusBar() {
     : `🏇 ${m.run} of ${m.total} races run${m.rated ? `, ${m.rated} rated` : ''}.`;
   return `<div class="rounded-xl border ${done ? 'border-emerald-500/40' : 'border-amber-500/30'} bg-[#11151d] px-4 py-2 text-[12px] ${done ? 'text-emerald-300' : 'text-amber-200'} mb-4">${text}</div>`;
 }
+
+// ---------------------------------------------------------------- where the money is
+// The strongest public signal in racing is the money. We publish each runner's
+// opening price and how far it has moved, so the board below is the market's
+// own opinion changing, not ours.
+function moveChip(r) {
+  const m = r.move_pct;
+  if (m === null || m === undefined || !r.open_price) return '';
+  const big = Math.abs(m) >= 15;
+  const tone = m >= 15 ? 'sect-green' : m <= -15 ? 'sect-red' : 'bg-[#0d1117] border border-[#1e2638] text-gray-400';
+  return `<span class="pill ${tone} py-0.5 ml-1" data-tip="${esc(`Opened ${money(r.open_price)}, now ${money(r.market_price)}`)}">${m >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(m))}%</span>`;
+}
+function renderMoney() {
+  const box = document.getElementById('moneyBoard'); if (!box) return;
+  const rows = [];
+  S.races.forEach(race => {
+    if (race.result_in) return;
+    (S.runners[race.race_id] || []).forEach(r => {
+      if (r._scratched || r.scratched || !r.open_price || r.move_pct === null || r.move_pct === undefined) return;
+      if (Math.abs(r.move_pct) < 10) return;
+      rows.push({ race, r });
+    });
+  });
+  if (!rows.length) { box.innerHTML = ''; return; }
+  rows.sort((a, b) => Math.abs(b.r.move_pct) - Math.abs(a.r.move_pct));
+  const firm = rows.filter(x => x.r.move_pct > 0).slice(0, 8);
+  const drift = rows.filter(x => x.r.move_pct < 0).slice(0, 8);
+  const line = x => `<div class="flex flex-wrap items-center gap-x-3 py-1.5 border-t border-[#1e2638] cursor-pointer hover:bg-white/[.02]" onclick="selectView('${x.race.race_id}')">
+      <span class="text-[#ff6600] font-black w-8">R${x.race.race_number}</span>
+      <span class="text-white font-bold min-w-[130px]">${x.r.saddlecloth ?? ''}. ${esc(x.r.horse_name)}</span>
+      <span class="font-mono-numbers text-xs text-gray-400">${money(x.r.open_price)} → <span class="text-white">${money(x.r.market_price)}</span></span>
+      <span class="font-mono-numbers text-xs ${x.r.move_pct > 0 ? 'text-emerald-400' : 'text-red-400'}">${x.r.move_pct > 0 ? '▲' : '▼'} ${Math.abs(Math.round(x.r.move_pct))}%</span>
+      <span class="text-[11px] text-gray-500">we say ${num((x.r._p || 0) * 100, 0)}%${x.r.play_flag ? ' · ★ play' : ''}${x.r._fade ? ' · fade' : ''}</span>
+    </div>`;
+  box.innerHTML = `<div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-5 mt-6">
+      <h3 class="text-white font-black text-lg">Where the money is going</h3>
+      <p class="text-[11px] text-gray-500 mb-2">Movements of 10% or more since each market opened. Money is the market changing its own mind, and it is the signal we are least able to see in the form.</p>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div><div class="text-[10px] text-emerald-400 uppercase tracking-widest">Being backed</div>${firm.map(line).join('') || '<div class="text-gray-500 text-sm py-2">Nothing firming yet.</div>'}</div>
+        <div><div class="text-[10px] text-red-400 uppercase tracking-widest">Drifting</div>${drift.map(line).join('') || '<div class="text-gray-500 text-sm py-2">Nothing drifting yet.</div>'}</div>
+      </div>
+      <p class="text-[10px] text-gray-500 mt-2">A play that is being backed is confirmation; a play drifting hard is a reason to look again. The Pattern Lab tests whether firmers actually win more than their price says.</p>
+    </div>`;
+}

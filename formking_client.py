@@ -379,6 +379,9 @@ def _map_entry(entry):
         "sire":             horse.get("sire"),
         "firm_or_drift":    _as_float(o.get("firmOrDrift")),
         "flucs":            flucs if isinstance(flucs, list) else None,
+        # Opening and best prices, so the engine can see where the money has gone.
+        "open_odds":        _as_float(o.get("avgOpen")),
+        "best_odds":        _as_float(o.get("bestNow")),
         # v2: every past run Form King returns (up to 12) and the runner's real
         # profile, so no part of the card has to be invented.
         "runs_all":         _last5(entry, limit=12),

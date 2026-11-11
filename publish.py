@@ -17,6 +17,7 @@ probability (p_model) and the market weight, and repeats the blend.
 
 import datetime
 import json
+import math
 import re
 from pathlib import Path
 
@@ -76,7 +77,8 @@ PUB_TABLES = {
                  ("settle_rank", "INTEGER"), ("map_zone", "TEXT"), ("early_speed", "REAL"),
                  ("map_lane", "TEXT"), ("map_tag", "TEXT"), ("p_model", "REAL"), ("p_market", "REAL"),
                  ("p_blend", "REAL"), ("fair_price", "REAL"), ("market_price", "REAL"),
-                 ("best_price", "REAL"), ("open_price", "REAL"), ("edge_pct", "REAL"), ("mao", "REAL"),
+                 ("best_price", "REAL"), ("open_price", "REAL"), ("move_pct", "REAL"),
+                 ("edge_pct", "REAL"), ("mao", "REAL"),
                  ("value_flag", "INTEGER"), ("stake", "REAL"), ("flucs", "TEXT"), ("last_runs", "TEXT"),
                  ("finish_pos", "INTEGER"), ("margin", "REAL"), ("result_bsp", "REAL"),
                  ("result_sp", "REAL"), ("result_rating", "REAL"), ("result_comment", "TEXT"),
@@ -224,6 +226,18 @@ def _result_for(entry_raw, race_id, win_margin=None):
     }
 
 
+def _move(e):
+    """How far a runner's price has come in since the market opened, as a log
+    ratio: positive means backed. The model sees the same shape in its fit."""
+    import math
+    odds = e.get("odds") or {}
+    open_p = fk._as_float(e.get("open_odds")) or fk._as_float(odds.get("avgOpen"))
+    now = fk._as_float(e.get("market_odds")) or fk._as_float(odds.get("avgNow")) or fk._as_float(odds.get("bestNow"))
+    if not open_p or not now or open_p <= 1 or now <= 1:
+        return None
+    return math.log(open_p / now)
+
+
 def _last_runs(runs):
     out = []
     for r in (runs or [])[:8]:
@@ -336,7 +350,8 @@ def publish_card(db, card, model=None, published_at=None):
                         "distance": race["distance"], "going": cond, "class_label": race["class_name"],
                         "track": track, "race_date": mdate, "barrier": e.get("barrier"),
                         "field_size": len(scored), "prep": e.get("prep_run_num"),
-                        "days_since": prof.get("days_since_run")})
+                        "days_since": prof.get("days_since_run"),
+                        "move": _move(e)})
                     if label == "v2":
                         statics[e["horse_name"]] = model_v2.static_logit(cand, f)
                     else:
@@ -456,7 +471,8 @@ def publish_card(db, card, model=None, published_at=None):
                 "early_speed": e.get("_es10"), "map_lane": tac.get("lane_name"), "map_tag": tac.get("tag"),
                 "p_model": b.get("p_model"), "p_market": b.get("p_market"), "p_blend": b.get("p_blended"),
                 "fair_price": fair, "market_price": mkt, "best_price": fk._as_float(odds.get("bestNow")),
-                "open_price": fk._as_float(odds.get("avgOpen")),
+                "open_price": fk._as_float(odds.get("avgOpen")) or e.get("open_odds"),
+                "move_pct": (lambda m: None if m is None else round((math.exp(m) - 1) * 100, 1))(_move(e)),
                 "edge_pct": round(edge * 100, 1) if edge is not None else None, "mao": mao,
                 "value_flag": int(value), "stake": calculate_stake(mkt)["dollars"] if (value and mkt) else None,
                 "flucs": json.dumps(e.get("flucs") or []), "last_runs": json.dumps(lruns),

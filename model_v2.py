@@ -57,6 +57,11 @@ FEATURES = [
     ("unraced_going", "never raced on today's going"),
     ("early", "average settling position (0 leads, 1 last)"),
     ("barrier_frac", "barrier / field size"),
+    ("firm", "backed since the market opened"),
+    ("drift", "drifted since the market opened"),
+    ("closer", "makes ground from the 800m"),
+    ("prep_peak", "at the run number it peaks at"),
+    ("prep_past", "deeper in the prep than it has ever won from"),
 ]
 NAMES = [f for f, _ in FEATURES]
 
@@ -124,7 +129,50 @@ def runner_features(model, horse, race):
     f["going_suit"], f["unraced_going"] = _going_suit(prior[prior["finish_pos"].notna()], going_band(race.get("going")))
     bar, fs = race.get("barrier"), race.get("field_size")
     f["barrier_frac"] = float(bar) / float(fs) if bar and fs and fs > 1 else 0.5
+
+    # Money: how far the price has come in (or gone out) since the market opened.
+    # Live that is the opening price against the price now; in the fit it is the
+    # opening price against the starting price. Same shape either way.
+    mv = race.get("move")
+    if mv is not None and not pd.isna(mv):
+        mv = float(max(-1.5, min(1.5, mv)))
+        f["firm"] = max(mv, 0.0)
+        f["drift"] = max(-mv, 0.0)
+
+    # Ground made from the 800m over the last three runs: a horse that improves
+    # its position late is doing more than its placing shows.
+    if not prior.empty and "pos_800" in prior:
+        gain = []
+        for _, x in prior.head(3).iterrows():
+            n = x.get("field_size")
+            if pd.notna(x.get("pos_800")) and pd.notna(x.get("finish_pos")) and n and n > 1:
+                gain.append((float(x["pos_800"]) - float(x["finish_pos"])) / (float(n) - 1))
+        if gain:
+            f["closer"] = float(np.mean(gain))
+
+    # Where this horse sits in its preparation against the run number it does its
+    # best work at, and the deepest run it has ever won from.
+    peak, best_win = _prep_shape(prior)
+    if prep and peak:
+        f["prep_peak"] = float(int(prep) == peak)
+    if prep and best_win:
+        f["prep_past"] = float(int(prep) > best_win)
     return f
+
+
+def _prep_shape(prior):
+    """(run number this horse rates best at, deepest run number it has won from)."""
+    if prior is None or prior.empty or "race_in_prep" not in prior:
+        return None, None
+    rated = prior[prior["wfa_rating"].notna() & prior["race_in_prep"].notna()]
+    peak = None
+    if len(rated) >= 3:
+        by = rated.groupby(rated["race_in_prep"].astype(int))["wfa_rating"].mean()
+        if len(by):
+            peak = int(by.idxmax())
+    wins = prior[(prior["finish_pos"] == 1) & prior["race_in_prep"].notna()]
+    best_win = int(wins["race_in_prep"].astype(int).max()) if len(wins) else None
+    return peak, best_win
 
 
 def build_dataset(h, model, since=TRAIN_FROM):
@@ -133,7 +181,9 @@ def build_dataset(h, model, since=TRAIN_FROM):
     for x in rows.itertuples(index=False):
         race = {"distance": x.distance, "going": x.going, "class_label": x.restrictions or x.race_name,
                 "track": x.track, "race_date": x.race_date, "barrier": x.barrier,
-                "field_size": x.field_size, "prep": x.race_in_prep, "days_since": x.days_since_prev}
+                "field_size": x.field_size, "prep": x.race_in_prep, "days_since": x.days_since_prev,
+                "move": (math.log(float(x.open_fluc) / float(x.sp))
+                         if getattr(x, "open_fluc", None) and x.sp and x.sp > 1 else None)}
         f = runner_features(model, x.horse_name, race)
         f["mkt"] = math.log(1.0 / x.sp)
         f.update(win=float(x.finish_pos == 1), sp=float(x.sp), bsp=float(x.bsp) if pd.notna(x.bsp) else None,

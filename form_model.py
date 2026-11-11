@@ -149,6 +149,7 @@ HISTORY_SQL = """
 SELECT x.race_id, x.horse_name, x.finish_pos, x.margin, x.field_size, x.barrier, x.weight,
        x.jockey, x.settle_pos, x.sp, x.bsp, x.wfa_rating, x.race_in_prep, x.days_since_prev,
        x.stewards_comment, x.next_runs, x.next_wins, x.source, x.race_in_career,
+       x.open_fluc, x.top_fluc, x.pos_800, x.pos_400, x.track_speed,
        r.race_date, r.track, r.state, r.distance, r.going, r.restrictions, r.race_name,
        r.field_size AS race_field_size
 FROM runs x JOIN races r ON r.race_id = x.race_id
@@ -160,7 +161,8 @@ def load_history(db):
     rows = db.query(HISTORY_SQL)
     cols = ["race_id", "horse_name", "finish_pos", "margin", "field_size", "barrier", "weight",
             "jockey", "settle_pos", "sp", "bsp", "wfa_rating", "race_in_prep", "days_since_prev",
-            "stewards_comment", "next_runs", "next_wins", "source", "race_in_career", "race_date", "track", "state",
+            "stewards_comment", "next_runs", "next_wins", "source", "race_in_career",
+            "open_fluc", "top_fluc", "pos_800", "pos_400", "track_speed", "race_date", "track", "state",
             "distance", "going", "restrictions", "race_name", "race_field_size"]
     df = pd.DataFrame([tuple(r) for r in rows], columns=cols)
     return prepare(df)
@@ -170,7 +172,7 @@ def prepare(df):
     df = df.copy()
     for c in ("finish_pos", "margin", "field_size", "barrier", "weight", "settle_pos", "sp", "bsp",
               "wfa_rating", "race_in_prep", "days_since_prev", "next_runs", "next_wins",
-              "distance", "race_field_size"):
+              "distance", "race_field_size", "open_fluc", "top_fluc", "pos_800", "pos_400", "track_speed"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df.loc[df["wfa_rating"] <= 0, "wfa_rating"] = float("nan")    # 0 = unrated
     df["field_size"] = df["field_size"].fillna(df["race_field_size"])

@@ -394,6 +394,19 @@ ANGLES = [
     ("Priced $7 to $12", None, lambda d: d["bsp"].between(7, 12, inclusive="left")),
     ("Priced $12 to $18", None, lambda d: d["bsp"].between(12, 18, inclusive="left")),
     ("Priced $18+", None, lambda d: d["bsp"] >= 18),
+    # Money: Betfair's own pre-play prices against the starting price. A horse
+    # whose average price taken was well above its SP was backed into the jump.
+    ("Backed: SP 20%+ under the average price taken", None,
+     lambda d: d["pp_wap"].notna() & (d["bsp"] > 0) & (d["pp_wap"] / d["bsp"] >= 1.2)),
+    ("Backed hard: SP 40%+ under the average taken", None,
+     lambda d: d["pp_wap"].notna() & (d["bsp"] > 0) & (d["pp_wap"] / d["bsp"] >= 1.4)),
+    ("Drifted: SP 20%+ above the average price taken", None,
+     lambda d: d["pp_wap"].notna() & (d["bsp"] > 0) & (d["pp_wap"] / d["bsp"] <= 1 / 1.2)),
+    ("Most money in the race (by Betfair volume)", None,
+     lambda d: d["pp_vol"].notna() & (d["pp_vol"] >= d.groupby("market_id")["pp_vol"].transform("max")) & (d["pp_vol"] > 0)),
+    ("Backed and favourite", None,
+     lambda d: d["pp_wap"].notna() & (d["pp_wap"] / d["bsp"] >= 1.2)
+               & (d["bsp"] <= d.groupby("market_id")["bsp"].transform("min"))),
 ]
 
 
