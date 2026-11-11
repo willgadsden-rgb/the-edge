@@ -187,3 +187,14 @@ def test_annotate_summarises_the_latest_run_only():
     out = upgrades.annotate(runs, ctx)
     assert out["up"] == 1 and out["down"] == 0 and "leaders dominated" in out["summary"]
     assert runs[1]["flags"][0]["dir"] < 0          # the older run is still flagged on its own row
+
+
+def test_trial_note_only_when_it_says_something():
+    win = [{"pos": 1, "margin": 1.5, "track": "Cranbourne", "dist": 800}]
+    assert "won its latest jump-out" in plays.trial_note(win, 1)
+    assert "first-up" in plays.trial_note(win, 1)
+    assert "first-up" not in plays.trial_note(win, 3)
+    assert plays.trial_note([{"pos": 7, "margin": -9.0}], 1) is None
+    assert plays.trial_note([], 1) is None
+    close = [{"pos": 2, "margin": -1.2, "track": "Pakenham", "dist": 740}]
+    assert "beaten 1.2L" in plays.trial_note(close, 1)

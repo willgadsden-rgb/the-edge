@@ -92,7 +92,8 @@ PUB_TABLES = {
                  # plays / fades and the locked morning numbers
                  ("play_flag", "INTEGER"), ("play_reasons", "TEXT"), ("fade_flag", "INTEGER"), ("play_checks", "TEXT"),
                  ("morning_price", "REAL"), ("morning_fair", "REAL"), ("morning_p", "REAL"), ("morning_at", "TEXT"),
-                 ("upgrade_up", "INTEGER"), ("upgrade_down", "INTEGER"), ("upgrade_note", "TEXT")],
+                 ("upgrade_up", "INTEGER"), ("upgrade_down", "INTEGER"), ("upgrade_note", "TEXT"),
+                 ("trial_note", "TEXT")],
     },
     # Paper-bet ledger: a row is written the first time a runner is flagged before
     # its race and never changed. kind = play | value | fade | top.
@@ -451,6 +452,7 @@ def publish_card(db, card, model=None, published_at=None):
                 "trials": json.dumps([dict(t, date=fk._date_str(t["date"]) if isinstance(t.get("date"), (int, float)) else t.get("date"))
                                       for t in (e.get("trials") or [])]),
                 "class_move": cmove, "class_move_pts": cpts, "form_rank": form_rank.get(name),
+                "trial_note": plays.trial_note(e.get("trials"), prep, prof.get("days_since_run")),
                 "play_flag": int(is_play), "play_reasons": "; ".join(why) if is_play else None, "fade_flag": int(fade),
                 "play_checks": json.dumps({"ok": why, "miss": _miss}) if (p_now or 0) >= 0.20 else None,
                 "morning_price": None if res else mkt, "morning_fair": None if res else fair,

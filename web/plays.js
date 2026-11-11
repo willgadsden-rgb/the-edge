@@ -23,8 +23,9 @@ function riderTags(r) {
   if (r.class_move === 'up') out.push(chip(`▲ class`, `Up in class: today's winning par is ${num(r.class_move_pts, 1)} points higher than its last race's`, 'border-amber-500/50 text-amber-300'));
   if (r.class_move === 'down') out.push(chip(`▼ class`, `Down in class: today's winning par is ${num(Math.abs(r.class_move_pts), 1)} points lower than its last race's`, 'border-emerald-500/50 text-emerald-300'));
   if (r.first_starter) out.push(chip('1st starter', 'Has never raced', 'border-sky-500/50 text-sky-300'));
+  if (r.trial_note) out.push(chip('Trial ✓', esc(r.trial_note), 'border-emerald-500/50 text-emerald-300'));
   const tr = parseJSON(r.trials, []);
-  if (tr.length) {
+  if (tr.length && !r.trial_note) {
     const t = tr[0];
     out.push(chip(`Trial ${t.pos ? ordinalTxt(t.pos) + (t.nrun ? '/' + t.nrun : '') : ''}`, `Latest jump-out/trial: ${t.date || ''} ${t.track || ''} ${t.dist ?? ''}m, ${t.pos ? ordinalTxt(t.pos) + ' of ' + (t.nrun ?? '?') : 'unplaced'}${t.margin ? ', margin ' + Math.abs(t.margin).toFixed(1) + 'L' : ''}. ${tr.length} on file; click the horse for all.`,
       t.pos === 1 ? 'border-emerald-500/50 text-emerald-300' : undefined));

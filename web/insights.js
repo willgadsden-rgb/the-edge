@@ -224,3 +224,51 @@ async function writeMeetingReport() {
   await askSend(`Write the review of ${(S.meeting || {}).track || 'this meeting'} on ${S.date}. Cover, in this order: how the track played (bias in the draw and run style), the races where the result made sense and where it did not, any horse that rated well above the winning par, hard-luck stories from the stewards' comments and the in-run positions, horses worth following next start with the reason, and what our own book got right and wrong. Keep it tight.`);
   if (btn) { btn.disabled = false; btn.textContent = '✍️ Write the review'; }
 }
+
+// ---------------------------------------------------------------- when to take the price
+// Our own cards answer this: the price we published in the morning against the
+// Betfair SP the race settled at. If prices shorten on the horses we like, take
+// the early price; if they drift, wait.
+async function loadTiming() {
+  const box = document.getElementById('timingBody'); if (!box) return;
+  box.innerHTML = '<div class="text-sm text-gray-400 p-4">Comparing our morning prices with the Betfair SP…</div>';
+  let rows = [];
+  try {
+    const { data, error } = await sb.from('edge_runners')
+      .select('horse_name,morning_price,morning_p,result_bsp,result_sp,finish_pos,play_flag,value_flag,scratched')
+      .not('morning_price', 'is', null).not('result_bsp', 'is', null).limit(20000);
+    if (error) throw error;
+    rows = (data || []).filter(r => !r.scratched && r.morning_price > 1 && r.result_bsp > 1);
+  } catch (e) { box.innerHTML = `<div class="text-sm text-amber-300 p-4">Could not read the prices: ${esc(e.message || e)}</div>`; return; }
+  if (rows.length < 20) {
+    box.innerHTML = `<p class="text-sm text-gray-500">Only ${rows.length} runners have both a morning price and a Betfair SP so far. This fills out as the morning sync runs each day — give it a week or two.</p>`;
+    return;
+  }
+  const BANDS = [[1, 3], [3, 6], [6, 11], [11, 21], [21, 1000]];
+  const label = ([lo, hi]) => hi >= 1000 ? `$${lo}+` : `$${lo}–$${hi}`;
+  const line = b => {
+    const g = rows.filter(r => r.morning_price >= b[0] && r.morning_price < b[1]);
+    if (!g.length) return '';
+    const shorter = g.filter(r => r.result_bsp < r.morning_price).length;
+    const avg = g.reduce((a, r) => a + (r.morning_price / r.result_bsp - 1), 0) / g.length * 100;
+    const win = g.filter(r => r.finish_pos === 1).length;
+    return `<tr class="border-t border-[#1e2638]">
+      <td class="p-2 font-mono-numbers">${label(b)}</td>
+      <td class="p-2 text-gray-400">${g.length.toLocaleString()}</td>
+      <td class="p-2 font-mono-numbers ${shorter / g.length > 0.55 ? 'text-emerald-400' : shorter / g.length < 0.45 ? 'text-red-400' : 'text-gray-300'}">${Math.round(shorter / g.length * 100)}%</td>
+      <td class="p-2 font-mono-numbers ${avg > 0 ? 'text-emerald-400' : 'text-red-400'}">${signed(avg, 1, '%')}</td>
+      <td class="p-2 text-gray-400">${win} (${Math.round(win / g.length * 100)}%)</td>
+      <td class="p-2 text-[11px] font-sans ${avg > 3 ? 'text-emerald-300' : avg < -3 ? 'text-amber-300' : 'text-gray-500'}">${
+        avg > 3 ? 'take the morning price' : avg < -3 ? 'wait — they drift' : 'no real difference'}</td></tr>`;
+  };
+  const plays = rows.filter(r => r.play_flag || r.value_flag);
+  const pAvg = plays.length ? plays.reduce((a, r) => a + (r.morning_price / r.result_bsp - 1), 0) / plays.length * 100 : null;
+  box.innerHTML = `
+    <p class="text-[11px] text-gray-500 mb-3">${rows.length.toLocaleString()} runners where we published a morning price and the race settled at a Betfair SP. "Shortened" means the SP came in under our morning price — that is money arriving after us.</p>
+    <div class="overflow-x-auto"><table class="w-full text-left text-xs">
+      <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider"><tr>
+        <th class="p-2">Morning price</th><th class="p-2">Runners</th><th class="p-2">Shortened by the jump</th>
+        <th class="p-2">Average move</th><th class="p-2">Winners</th><th class="p-2">Verdict</th></tr></thead>
+      <tbody>${BANDS.map(line).join('')}</tbody></table></div>
+    ${pAvg === null ? '' : `<p class="text-[11px] mt-2 ${pAvg > 0 ? 'text-emerald-300' : 'text-gray-400'}">Our own flagged runners (plays and value) moved <b>${signed(pAvg, 1, '%')}</b> on average from our morning price to the Betfair SP across ${plays.length} bets. ${pAvg > 2 ? 'The market follows us — take the early price.' : pAvg < -2 ? 'They drift after we flag them — waiting has been better.' : 'No meaningful drift either way yet.'}</p>`}`;
+}

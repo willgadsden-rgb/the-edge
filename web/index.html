@@ -312,6 +312,10 @@
           <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-3">Track Record: paper bets</h2>
           <div id="recordBody"></div>
         </div>
+        <div class="bg-[#11151d] border border-[#1e2638] rounded-xl p-6 shadow-2xl">
+          <h2 class="text-white font-black text-2xl uppercase tracking-widest mb-1">When to take the price</h2>
+          <div id="timingBody"></div>
+        </div>
       </section>
 
       <!-- GUIDE -->
@@ -850,7 +854,7 @@
     if (tab === 'ask') askRender();
     if (tab === 'compare') renderCompare();
     if (tab === 'bets') loadBets();
-    if (tab === 'record') loadRecord();
+    if (tab === 'record') { loadRecord(); loadTiming(); }
     if (tab === 'horses') setTimeout(() => document.getElementById('horseSearchBox').focus(), 50);
   }
 

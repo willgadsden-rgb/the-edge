@@ -115,3 +115,29 @@ def play_check(r):
     tags = r.get("tags") or []
     need("excuse_last" not in tags and "down_trip" not in tags, "no fade angle", "carries a fade angle")
     return (not misses), reasons, misses
+
+
+TRIAL_WIN_MARGIN = 2.0
+
+
+def trial_note(trials, prep_run, days_since=None):
+    """A line about the latest jump-out when it is worth knowing: a horse
+    first-up that won or ran close in a recent trial is doing something the
+    form guide cannot show. Returns None when the trials say nothing useful.
+    """
+    t = (trials or [None])[0]
+    if not t or not t.get("pos"):
+        return None
+    first_up = (prep_run or 1) <= 1
+    pos, margin = t.get("pos"), t.get("margin")
+    close = margin is not None and abs(margin) <= TRIAL_WIN_MARGIN
+    where = " ".join(str(x) for x in (t.get("track") or "", (str(t.get("dist")) + "m") if t.get("dist") else "") if x).strip()
+    if pos == 1:
+        note = "won its latest jump-out" + (" at " + where if where else "")
+    elif pos <= 3 and close:
+        note = "ran {} in its latest jump-out, beaten {:.1f}L".format(pos, abs(margin))
+    else:
+        return None
+    if first_up:
+        note += ", and it is first-up"
+    return note
