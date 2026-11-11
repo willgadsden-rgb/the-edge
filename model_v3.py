@@ -452,8 +452,13 @@ def fit_logit_binary(X, y, l2=L2, iters=40):
 def evaluate_place(df, names=NAMES, label="v3-place"):
     """Can we beat the place market? Same features, target is a top-three finish,
     judged against Betfair's own place starting price."""
-    d = df[(df["date"] >= pd.Timestamp(TRAIN_FROM)) & df["place_bsp"].notna() & (df["place_bsp"] > 1)
-           & df["placed"].notna() & (df["n"] >= 8)].sort_values(["date", "time", "market_id"]).reset_index(drop=True)
+    d = df[(df["date"] >= pd.Timestamp(TRAIN_FROM)) & df["place_bsp"].notna() & (df["place_bsp"] > 1.0)
+           & (df["place_bsp"] <= 1000.0) & np.isfinite(df["place_bsp"])
+           & df["placed"].notna() & (df["n"] >= 8)].copy()
+    # An unusable price or a missing feature turns the whole fit into NaN, so the
+    # rows that cannot be used are dropped rather than carried.
+    feats = d[list(names)].astype(float)
+    d = d[np.isfinite(feats).all(axis=1)].sort_values(["date", "time", "market_id"]).reset_index(drop=True)
     if len(d) < 20000:
         return {"label": label, "n": int(len(d)), "enough_data": False}
     split = pd.Timestamp(SPLIT_DATE)
