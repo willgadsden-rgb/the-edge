@@ -356,11 +356,11 @@ def _map_entry(entry):
     name = horse.get("name")
     if not name:
         return None
-    # A runner with no market price can't be priced against the book, so skip it
-    # (the model, like the mock card, assumes every runner carries market_odds).
+    # A runner with no market price yet is still a runner: tomorrow's cards are
+    # published before the bookmakers frame a market. It is carried with no
+    # price, the blend falls back to pure model, and nothing is flagged as value
+    # until a price exists.
     odds = _odds(entry)
-    if odds is None:
-        return None
     prep = entry.get("raceInPrep")
     o = entry.get("odds") or {}
     flucs = o.get("flucs")
