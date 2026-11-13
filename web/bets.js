@@ -90,8 +90,23 @@ async function logBet() {
     BL.form.note = ''; BL.bets = null; loadBets();
   } catch (e) { msg.innerHTML = `<span class="text-red-400">Not logged: ${esc(e.message)}</span>`; }
 }
+// Two different things, so two buttons. Cancel removes a bet logged by
+// mistake; void keeps a real bet in the ledger but out of the P&L.
+function askCancel(id, horse) {
+  const cell = document.getElementById('act-' + id); if (!cell) return;
+  cell.innerHTML = `<span class="whitespace-nowrap text-[11px]">Remove ${esc(horse)}?
+      <button onclick="cancelBet('${esc(id)}')" class="text-red-400 font-bold ml-1">Yes</button>
+      <button onclick="loadBets()" class="text-gray-400 ml-1">No</button></span>`;
+}
+async function cancelBet(id) {
+  const pin = BL.pin || lsGet('edge_bet_pin') || '';
+  const res = await fetch('/api/bets?remove=' + encodeURIComponent(id), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }) });
+  const out = await res.json().catch(() => ({}));
+  if (res.ok) { BL.bets = null; BL.msg = '<span class="text-gray-400">Bet removed.</span>'; loadBets(); }
+  else { const c = document.getElementById('act-' + id); if (c) c.innerHTML = `<span class="text-red-400 text-[11px]">${esc(out.error || res.status)}</span>`; }
+}
 async function voidBet(id) {
-  if (!window.confirm || !confirm('Void this bet? It stays in the log, marked void, and drops out of the P&L.')) return;
   const pin = BL.pin || lsGet('edge_bet_pin') || '';
   const res = await fetch('/api/bets?void=' + encodeURIComponent(id), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin }) });
   if (res.ok) { BL.bets = null; loadBets(); }
@@ -156,7 +171,7 @@ function renderLedger() {
     <div class="overflow-x-auto"><table class="w-full text-left font-mono-numbers text-xs">
       <thead class="bg-[#0d1117] text-gray-500 uppercase text-[10px] tracking-wider"><tr>
         <th class="p-3">Date</th><th class="p-3 font-sans">Race</th><th class="p-3 font-sans">Horse</th><th class="p-3">Odds</th><th class="p-3">Stake</th><th class="p-3">To win</th>
-        <th class="p-3">Our price</th><th class="p-3">Edge</th><th class="p-3">BSP</th><th class="p-3">Result</th><th class="p-3">P/L</th><th class="p-3 font-sans">Who / note</th><th class="p-3"></th></tr></thead>
+        <th class="p-3">Our price</th><th class="p-3">Edge</th><th class="p-3">BSP</th><th class="p-3">Result</th><th class="p-3">P/L</th><th class="p-3 font-sans">Who / note</th><th class="p-3 font-sans">Remove</th></tr></thead>
       <tbody class="divide-y divide-[#1e2638]">${list.map(({ b, s }) => {
         const clv = s.r && s.r.result_bsp ? b.odds_taken / s.r.result_bsp - 1 : null;
         const tone = s.status === 'Won' ? 'text-emerald-400 font-bold' : s.status === 'Lost' ? 'text-red-400' : 'text-gray-400';
@@ -169,7 +184,9 @@ function renderLedger() {
           <td class="p-3 ${tone}">${s.status}${s.r && s.r.finish_pos && s.status === 'Lost' ? ` (${s.r.finish_pos})` : ''}</td>
           <td class="p-3 ${s.pl > 0 ? 'text-emerald-400' : s.pl < 0 ? 'text-red-400' : 'text-gray-500'}">${s.pl === null ? '–' : (s.pl >= 0 ? '+' : '−') + '$' + Math.abs(s.pl).toFixed(2)}</td>
           <td class="p-3 font-sans text-[11px] text-gray-400">${esc(b.bettor || '')}${b.bookmaker ? ' · ' + esc(b.bookmaker) : ''}${b.note ? '<br>' + esc(b.note) : ''}</td>
-          <td class="p-3">${b.void ? '' : `<button onclick="voidBet('${esc(b.id)}')" class="text-gray-500 hover:text-red-400 text-[11px]">void</button>`}</td></tr>`; }).join('') ||
+          <td class="p-3" id="act-${esc(b.id)}">${b.void ? '<span class="text-gray-600 text-[11px]">void</span>' : `
+            <button onclick='askCancel(${JSON.stringify(b.id)}, ${JSON.stringify(b.horse_name)})' class="border border-red-500/40 text-red-400 hover:bg-red-500/10 rounded px-2 py-1 text-[11px] font-bold whitespace-nowrap">✕ Cancel</button>
+            ${s.status === 'Pending' ? '' : `<button onclick="voidBet('${esc(b.id)}')" class="text-gray-600 hover:text-gray-300 text-[10px] ml-1" data-tip="Keep it in the ledger but leave it out of the P&L">void</button>`}`}</td></tr>`; }).join('') ||
         '<tr><td colspan="13" class="p-8 text-center text-gray-500">No bets logged yet.</td></tr>'}</tbody></table></div>
-    <p class="text-[10px] text-gray-500 mt-2">Stake = $100 ÷ (odds − 1), never more than $75 (so under $2.34 it wins less than $100). Results settle from the night sync; scratched horses settle at $0. CLV = your odds against the Betfair SP.</p>`;
+    <p class="text-[10px] text-gray-500 mt-2">Stake = $100 ÷ (odds − 1), never more than $75 (so under $2.34 it wins less than $100). Results settle from the night sync; scratched horses settle at $0. CLV = your odds against the Betfair SP. Logged one by accident? <b class="text-red-400">✕ Cancel</b> removes it completely; <b>void</b> keeps a real bet in the ledger but out of the P&amp;L.</p>`;
 }

@@ -34,6 +34,14 @@ exports.handler = async (event) => {
     const r = await sb(`edge_bets?id=eq.${encodeURIComponent(qs.void)}`, { method: 'PATCH', body: JSON.stringify({ void: 1 }) });
     return r.ok ? json(200, { ok: true }) : json(r.status, { error: await r.text() });
   }
+  // A bet logged by mistake is removed outright - a void row in the ledger is
+  // for a bet that was real, not for a wrong tap.
+  if (qs.remove) {
+    const r = await sb(`edge_bets?id=eq.${encodeURIComponent(qs.remove)}`, { method: 'DELETE' });
+    if (!r.ok) return json(r.status, { error: await r.text() });
+    const gone = await r.json().catch(() => []);
+    return json(200, { ok: true, removed: Array.isArray(gone) ? gone.length : 1 });
+  }
   const odds = Number(b.odds_taken);
   if (!b.horse_name || !b.race_id || !(odds > 1.01) || odds > 1001) return json(400, { error: 'Need a horse, a race and odds above $1.01' });
   const stake = Math.round(Math.min(TARGET / (odds - 1), MAX_STAKE) * 100) / 100;
